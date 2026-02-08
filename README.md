@@ -12,10 +12,10 @@ A CLI tool that uses a local [Ollama](https://ollama.com/) instance to generate 
 
 ```bash
 # Global installation
-npm install -g git-message-ai-commit
+npm install -g commitgen-cc
 
 # Or run directly with npx
-npx git-message-ai-commit
+npx commitgen-cc
 ```
 
 ## Usage
@@ -29,7 +29,7 @@ git add .
 Run the tool:
 
 ```bash
-git-ai-commit
+commitgen-cc
 ```
 
 ### Options
@@ -59,7 +59,7 @@ git-ai-commit
 Generate JSON output in non-interactive mode:
 
 ```bash
-git-ai-commit --ci --dry-run --output json
+commitgen-cc --ci --dry-run --output json
 ```
 
 ### Exit codes
@@ -79,5 +79,8 @@ git-ai-commit --ci --dry-run --output json
 You can set a shorter alias (e.g. `aic`) in your shell config (`.zshrc`, `.bashrc`, etc.):
 
 ```bash
-alias aic="git-ai-commit"
+echo 'alias aic="commitgen-cc"' >> ~/.aliases \
+&& { [ -n "$ZSH_VERSION" ] && echo '[ -f ~/.aliases ] && source ~/.aliases' >> ~/.zshrc; } \
+&& { [ -n "$BASH_VERSION" ] && echo '[ -f ~/.aliases ] && source ~/.aliases' >> ~/.bashrc; } \
+&& source ~/.aliases
 ```
