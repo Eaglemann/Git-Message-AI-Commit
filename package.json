@@ -42,7 +42,5 @@
     "typescript-eslint": "^8.53.0",
     "vitest": "^4.0.7"
   },
-  "bin": {
-    "commitgen-cc": "./dist/cli.js"
-  }
+  "bin": "dist/cli.js"
 }
