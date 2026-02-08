@@ -43,6 +43,6 @@
     "vitest": "^4.0.7"
   },
   "bin": {
-    "git-ai-commit": "dist/cli.js"
+    "commitgen-cc": "./bin/index.js"
   }
 }
