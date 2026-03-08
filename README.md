@@ -107,7 +107,8 @@ Setup:
    - owner: `Eaglemann`
    - repository: `commitgen-cc`
    - workflow filename: `release.yml`
-3. Save the change. npm only allows one trusted publisher per package, so this should replace any previous `ci.yml` entry.
+   - environment: leave blank unless this workflow is later updated to use a GitHub Actions environment
+3. Save the change. npm only allows one trusted publisher per package, so this should replace any previous `ci.yml` entry or any old repo/workflow mapping.
 
 Release flow:
 
