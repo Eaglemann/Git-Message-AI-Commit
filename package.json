@@ -18,6 +18,10 @@
   "keywords": [],
   "author": "Denis Tola",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Eaglemann/commitgen-cc.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=18"
