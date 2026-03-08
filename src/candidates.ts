@@ -1,12 +1,12 @@
 import { ollamaChat } from "./ollama.js";
+import { lintCommitMessage } from "./policy.js";
 import { buildMessages } from "./prompt.js";
 import { rankCandidates, type RankedCandidate } from "./ranking.js";
 import {
     extractMessageFromModelOutput,
     extractMessageListFromModelOutput,
     normalizeMessage,
-    repairMessage,
-    validateMessage
+    repairMessage
 } from "./validation.js";
 import type { RepoContext, ResolvedWorkflowOptions } from "./workflow.js";
 
@@ -26,10 +26,13 @@ function toCandidateDraft(
     });
 
     const message = normalizeMessage(repaired.message);
+    const lintResult = lintCommitMessage(message, options.policy, options.ticketPattern);
     return {
         message,
         source: repaired.didRepair ? "repaired" : "model",
-        validation: validateMessage(message)
+        validation: lintResult.ok
+            ? { ok: true }
+            : { ok: false, reason: lintResult.errors[0] ?? "Invalid commit message" }
     };
 }
 
@@ -53,6 +56,7 @@ async function requestModelOutput(
         forcedScope: options.scope,
         knownScopes: options.knownScopes,
         candidateCount,
+        policy: options.policy,
         revisionRequest
     });
 
@@ -119,7 +123,8 @@ export async function generateCandidates(
     return rankCandidates(candidates, {
         expectedType: context.expectedType,
         expectedScope: context.effectiveScope,
-        ticket: context.ticket
+        ticket: context.ticket,
+        subjectMaxLength: options.policy.subjectMaxLength
     });
 }
 
@@ -139,7 +144,8 @@ export async function reviseCandidate(
         score: rankCandidates([candidate], {
             expectedType: context.expectedType,
             expectedScope: context.effectiveScope,
-            ticket: context.ticket
+            ticket: context.ticket,
+            subjectMaxLength: options.policy.subjectMaxLength
         })[0]?.score ?? 0
     };
 }
