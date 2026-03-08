@@ -105,7 +105,7 @@ Setup:
 1. Open the npm package settings for `commitgen-cc`.
 2. Add a Trusted Publisher for GitHub Actions with:
    - owner: `Eaglemann`
-   - repository: `Git-Message-AI-Commit`
+   - repository: `commitgen-cc`
    - workflow filename: `ci.yml`
    - branch: `main`
 3. Push to `main` from this repository.
@@ -116,6 +116,7 @@ Notes:
 
 - No `NPM_TOKEN` GitHub secret is required for trusted publishing.
 - The workflow file name matters. npm must trust `ci.yml` exactly.
+- The publish job upgrades npm to meet the current trusted-publishing minimum before running `npm publish --provenance`.
 - If you later rename the workflow file or split publishing into a different workflow, you must update the trusted publisher configuration on npm.
 
 ### Exit codes
