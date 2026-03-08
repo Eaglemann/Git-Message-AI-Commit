@@ -40,7 +40,7 @@ commitgen-cc
 - `--type <type>`: Force a commit type (feat, fix, etc.)
 - `--scope <scope>`: Optional commit scope
 - `--config <path>`: Load config from a custom JSON file
-- `--candidates <n>`: Generate and rank between `1` and `5` candidates
+- `--candidates <n>`: Generate and rank between `1` and `5` candidates; use `> 1` to opt into multi-candidate interactive mode
 - `--ticket <id>`: Force a ticket reference such as `ABC-123`
 - `--no-history`: Disable local history examples and persistence
 - `--dry-run`: Print message to stdout without committing
@@ -71,8 +71,7 @@ Place a `.commitgen.json` file at the repo root to set project defaults:
   "scopes": ["cli", "workflow", "docs"],
   "ticketPattern": "([A-Z][A-Z0-9]+-\\d+)",
   "historyEnabled": true,
-  "historySampleSize": 5,
-  "interactiveCandidates": 3
+  "historySampleSize": 5
 }
 ```
 
@@ -95,6 +94,8 @@ commitgen-cc --ci --dry-run --output json --candidates 3
 ```
 
 JSON success output now includes `scope`, `ticket`, and `alternatives` when available.
+
+Interactive mode generates one best message by default. Pass `--candidates <n>` with `n > 1` to opt into multi-candidate selection.
 
 ## Releases and npm publish
 
