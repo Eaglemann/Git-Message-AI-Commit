@@ -41,7 +41,7 @@ describe("resolveWorkflowOptions", () => {
         expect(resolved.candidates).toBe(5);
     });
 
-    it("uses repo defaults for interactive candidates and history when CLI does not override them", () => {
+    it("uses single-message interactive mode by default while still honoring history config", () => {
         const resolved = resolveWorkflowOptions(baseOptions(), {
             historyEnabled: false,
             historySampleSize: 3,
@@ -50,16 +50,16 @@ describe("resolveWorkflowOptions", () => {
 
         expect(resolved.historyEnabled).toBe(false);
         expect(resolved.historySampleSize).toBe(3);
-        expect(resolved.candidates).toBe(4);
+        expect(resolved.candidates).toBe(1);
     });
 
-    it("forces non-interactive runs to a single candidate unless explicitly overridden", () => {
+    it("still allows CLI candidate overrides explicitly", () => {
         const resolved = resolveWorkflowOptions(baseOptions({
-            ci: true
+            candidates: 3
         }), {
             interactiveCandidates: 4
         });
 
-        expect(resolved.candidates).toBe(1);
+        expect(resolved.candidates).toBe(3);
     });
 });

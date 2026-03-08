@@ -51,4 +51,27 @@ describe("buildMessages", () => {
         expect(messages[1].content).toContain("No explicit ticket was provided.");
         expect(messages[1].content).toContain("Changed files:");
     });
+
+    it("includes revision context when revising an existing message", () => {
+        const messages = buildMessages({
+            diff: "diff --git a/src/a.ts b/src/a.ts",
+            files: ["src/a.ts"],
+            branch: "feature/ABC-123-parser",
+            suggestedScope: "src",
+            ticket: "ABC-123",
+            recentExamples: [],
+            forcedType: null,
+            forcedScope: null,
+            revisionRequest: {
+                currentMessage: "feat(src): add baseline",
+                feedback: "make it shorter"
+            }
+        });
+
+        expect(messages[1].content).toContain("Revise the existing commit message");
+        expect(messages[1].content).toContain("Current Message:");
+        expect(messages[1].content).toContain("feat(src): add baseline");
+        expect(messages[1].content).toContain("Revision Feedback:");
+        expect(messages[1].content).toContain("make it shorter");
+    });
 });
