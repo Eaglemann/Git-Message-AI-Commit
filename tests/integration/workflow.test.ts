@@ -164,7 +164,6 @@ describe("runWorkflow", () => {
 
     it("commits in interactive mode when action is accept", async () => {
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "accept" });
 
         const result = await runWorkflow(baseOptions({ ci: false }));
@@ -178,7 +177,6 @@ describe("runWorkflow", () => {
 
     it("returns dry-run result in interactive mode", async () => {
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "dry" });
 
         const result = await runWorkflow(baseOptions({ ci: false }));
@@ -191,7 +189,6 @@ describe("runWorkflow", () => {
 
     it("does not record history for interactive dry-run", async () => {
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "dry" });
 
         await runWorkflow(baseOptions({
@@ -204,7 +201,6 @@ describe("runWorkflow", () => {
 
     it("supports interactive edit flow and commits edited message", async () => {
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "edit" })
             .mockResolvedValueOnce({ message: "fix(core): adjust parser flow" });
 
@@ -213,9 +209,24 @@ describe("runWorkflow", () => {
         expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(core): adjust parser flow", { noVerify: false });
     });
 
+    it("supports ask-for-change revision flow before commit", async () => {
+        promptsMock
+            .mockResolvedValueOnce({ action: "revise" })
+            .mockResolvedValueOnce({ feedback: "make it shorter and use fix" })
+            .mockResolvedValueOnce({ action: "accept" });
+        ollamaMock.ollamaChat
+            .mockResolvedValueOnce("{\"message\":\"feat: add baseline\"}")
+            .mockResolvedValueOnce("{\"message\":\"fix(src): tighten parser flow\"}");
+
+        const result = await runWorkflow(baseOptions({ ci: false }));
+
+        expect(result.ok).toBe(true);
+        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(src): tighten parser flow\n\nRefs ABC-123", { noVerify: false });
+        expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(2);
+    });
+
     it("returns and persists the actual final scope when an edited message omits scope", async () => {
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "edit" })
             .mockResolvedValueOnce({ message: "fix: adjust parser flow" });
 
@@ -234,7 +245,6 @@ describe("runWorkflow", () => {
 
     it("treats empty edit input as cancellation", async () => {
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "edit" })
             .mockResolvedValueOnce({ message: undefined });
 
@@ -243,12 +253,23 @@ describe("runWorkflow", () => {
         if (result.ok) expect(result.cancelled).toBe(true);
     });
 
+    it("keeps the current message when revision feedback is empty", async () => {
+        promptsMock
+            .mockResolvedValueOnce({ action: "revise" })
+            .mockResolvedValueOnce({ feedback: "   " })
+            .mockResolvedValueOnce({ action: "accept" });
+
+        const result = await runWorkflow(baseOptions({ ci: false }));
+
+        expect(result.ok).toBe(true);
+        expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(1);
+    });
+
     it("loops when interactive accept is invalid and then allows cancel", async () => {
         ollamaMock.ollamaChat.mockResolvedValue("{\"message\":\"invalid message\"}");
         promptsMock
-            .mockResolvedValueOnce({ selection: "candidate:0" })
             .mockResolvedValueOnce({ action: "accept" })
-            .mockResolvedValueOnce({ selection: "cancel" });
+            .mockResolvedValueOnce({ action: "cancel" });
 
         const result = await runWorkflow(baseOptions({ ci: false }));
         expect(result.ok).toBe(true);
@@ -260,7 +281,6 @@ describe("runWorkflow", () => {
         const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
         try {
             promptsMock
-                .mockResolvedValueOnce({ selection: "candidate:0" })
                 .mockResolvedValueOnce({ action: "accept" });
 
             await runWorkflow(baseOptions({ ci: false }));
@@ -271,6 +291,21 @@ describe("runWorkflow", () => {
         } finally {
             logSpy.mockRestore();
         }
+    });
+
+    it("uses candidate selection flow only when --candidates > 1", async () => {
+        promptsMock
+            .mockResolvedValueOnce({ selection: "candidate:1" })
+            .mockResolvedValueOnce({ action: "accept" });
+        ollamaMock.ollamaChat.mockResolvedValueOnce("{\"messages\":[\"feat(src): add baseline\",\"fix(src): tighten parser flow\"]}");
+
+        const result = await runWorkflow(baseOptions({
+            ci: false,
+            candidates: 2
+        }));
+
+        expect(result.ok).toBe(true);
+        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(src): tighten parser flow\n\nRefs ABC-123", { noVerify: false });
     });
 
     it("includes inferred ticket and alternatives in dry-run results", async () => {
