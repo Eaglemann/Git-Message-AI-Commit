@@ -1,33 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { describe, expect, it } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execa } from "execa";
-
-type Handler = (req: IncomingMessage, res: ServerResponse<IncomingMessage>) => void;
-
-async function startServer(handler: Handler): Promise<{ host: string; close: () => Promise<void> }> {
-    const server = createServer(handler);
-
-    await new Promise<void>((resolveStart) => {
-        server.listen(0, "127.0.0.1", () => resolveStart());
-    });
-
-    const address = server.address();
-    if (!address || typeof address === "string") {
-        throw new Error("Failed to start server.");
-    }
-
-    return {
-        host: `http://127.0.0.1:${address.port}`,
-        close: async () => {
-            await new Promise<void>((resolveClose, rejectClose) => {
-                server.close((error) => (error ? rejectClose(error) : resolveClose()));
-            });
-        }
-    };
-}
 
 async function initRepo(repoDir: string): Promise<void> {
     await execa("git", ["init"], { cwd: repoDir });
@@ -36,54 +11,65 @@ async function initRepo(repoDir: string): Promise<void> {
 }
 
 describe("cli e2e", () => {
-    const cleanupTasks: Array<() => Promise<void>> = [];
-
-    afterEach(async () => {
-        while (cleanupTasks.length > 0) {
-            const cleanup = cleanupTasks.pop();
-            if (cleanup) await cleanup();
-        }
-    });
-
-    it("emits JSON success output in CI dry-run mode", async () => {
+    it("emits JSON success output in CI dry-run mode with repo config, ticket inference, and alternatives", async () => {
         const repoDir = await mkdtemp(join(tmpdir(), "git-ai-commit-e2e-"));
         await initRepo(repoDir);
         await writeFile(join(repoDir, "README.md"), "# Demo\n");
+        await writeFile(join(repoDir, ".commitgen.json"), JSON.stringify({
+            model: "repo-model",
+            host: "http://repo-config-host"
+        }, null, 2));
+        await writeFile(join(repoDir, "mock-fetch.mjs"), `
+const chatResponses = JSON.parse(process.env.MOCK_OLLAMA_CHAT_RESPONSES ?? "[]");
+const models = JSON.parse(process.env.MOCK_OLLAMA_MODELS ?? "[]");
+
+globalThis.fetch = async (url) => {
+  const target = String(url);
+  if (target.endsWith("/api/tags")) {
+    return new Response(JSON.stringify({ models: models.map((name) => ({ name })) }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }
+
+  if (target.endsWith("/api/chat")) {
+    const content = chatResponses.shift() ?? "{\\"message\\":\\"docs: update readme\\"}";
+    return new Response(JSON.stringify({ message: { content } }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }
+
+  return new Response("not found", { status: 404 });
+};
+`);
+        await execa("git", ["checkout", "-b", "feature/ABC-123-readme"], { cwd: repoDir });
         await execa("git", ["add", "README.md"], { cwd: repoDir });
 
-        const server = await startServer((req, res) => {
-            if (req.url === "/api/tags" && req.method === "GET") {
-                res.setHeader("content-type", "application/json");
-                res.end(JSON.stringify({ models: [{ name: "gpt-oss:120b-cloud:latest" }] }));
-                return;
-            }
-
-            if (req.url === "/api/chat" && req.method === "POST") {
-                res.setHeader("content-type", "application/json");
-                res.end(JSON.stringify({
-                    message: { content: "{\"message\":\"docs: update readme\"}" }
-                }));
-                return;
-            }
-
-            res.statusCode = 404;
-            res.end();
-        });
-        cleanupTasks.push(server.close);
-
-        const tsxBin = resolve(process.cwd(), "node_modules/.bin/tsx");
-        const cliPath = resolve(process.cwd(), "src/cli.ts");
-        const { stdout, exitCode } = await execa(tsxBin, [
+        const nodeBin = process.execPath;
+        const cliPath = resolve(process.cwd(), "dist/cli.js");
+        const bootstrapPath = join(repoDir, "mock-fetch.mjs");
+        const { stdout, exitCode } = await execa(nodeBin, [
+            "--import",
+            bootstrapPath,
             cliPath,
             "--ci",
             "--dry-run",
             "--output",
             "json",
-            "--host",
-            server.host,
-            "--model",
-            "gpt-oss:120b-cloud"
-        ], { cwd: repoDir });
+            "--candidates",
+            "3"
+        ], {
+            cwd: repoDir,
+            env: {
+                MOCK_OLLAMA_MODELS: JSON.stringify(["repo-model:latest"]),
+                MOCK_OLLAMA_CHAT_RESPONSES: JSON.stringify([
+                    "{\"message\":\"docs: update readme\"}",
+                    "{\"message\":\"docs: refine readme guidance\"}",
+                    "{\"message\":\"docs: tighten readme copy\"}"
+                ])
+            }
+        });
 
         expect(exitCode).toBe(0);
         const payload = JSON.parse(stdout) as {
@@ -91,22 +77,29 @@ describe("cli e2e", () => {
             message: string;
             source: string;
             committed: boolean;
+            ticket?: string;
+            alternatives?: string[];
         };
 
         expect(payload.status).toBe("ok");
-        expect(payload.message).toBe("docs: update readme");
+        expect(payload.message).toBe("docs: update readme\n\nRefs ABC-123");
         expect(payload.committed).toBe(false);
-        expect(payload.source).toBe("model");
+        expect(payload.source).toBe("repaired");
+        expect(payload.ticket).toBe("ABC-123");
+        expect(payload.alternatives).toEqual([
+            "docs: refine readme guidance\n\nRefs ABC-123",
+            "docs: tighten readme copy\n\nRefs ABC-123"
+        ]);
     });
 
     it("returns git context error code when no staged changes exist", async () => {
         const repoDir = await mkdtemp(join(tmpdir(), "git-ai-commit-e2e-"));
         await initRepo(repoDir);
 
-        const tsxBin = resolve(process.cwd(), "node_modules/.bin/tsx");
-        const cliPath = resolve(process.cwd(), "src/cli.ts");
+        const nodeBin = process.execPath;
+        const cliPath = resolve(process.cwd(), "dist/cli.js");
 
-        const error = await execa(tsxBin, [
+        const error = await execa(nodeBin, [
             cliPath,
             "--ci",
             "--output",
