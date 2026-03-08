@@ -1,70 +1,39 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ollamaChat, ensureLocalModel, OllamaError } from "../../src/ollama.js";
 
-type Handler = (req: IncomingMessage, res: ServerResponse<IncomingMessage>) => void;
-
-async function startServer(handler: Handler): Promise<{ host: string; close: () => Promise<void> }> {
-    const server = createServer(handler);
-
-    await new Promise<void>((resolve) => {
-        server.listen(0, "127.0.0.1", () => resolve());
-    });
-
-    const address = server.address();
-    if (!address || typeof address === "string") {
-        throw new Error("Failed to start test server.");
-    }
-
-    return {
-        host: `http://127.0.0.1:${address.port}`,
-        close: async () => {
-            await new Promise<void>((resolve, reject) => {
-                server.close((error) => (error ? reject(error) : resolve()));
-            });
-        }
-    };
-}
-
 describe("ollama helpers", () => {
-    const cleaners: Array<() => Promise<void>> = [];
-
     afterEach(async () => {
-        while (cleaners.length > 0) {
-            const cleanup = cleaners.pop();
-            if (cleanup) await cleanup();
-        }
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
     });
 
     it("retries chat on transient server errors", async () => {
         let attempts = 0;
-        const server = await startServer((req, res) => {
-            if (req.url === "/api/chat" && req.method === "POST") {
+        vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string | URL) => {
+            if (String(url).endsWith("/api/chat")) {
                 attempts += 1;
                 if (attempts < 3) {
-                    res.statusCode = 500;
-                    res.end("temporary failure");
-                    return;
+                    return new Response("temporary failure", { status: 500 });
                 }
 
-                res.setHeader("content-type", "application/json");
-                res.end(JSON.stringify({ message: { content: "{\"message\":\"feat: recover after retries\"}" } }));
-                return;
+                return new Response(JSON.stringify({
+                    message: { content: "{\"message\":\"feat: recover after retries\"}" }
+                }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" }
+                });
             }
 
-            if (req.url === "/api/tags" && req.method === "GET") {
-                res.setHeader("content-type", "application/json");
-                res.end(JSON.stringify({ models: [{ name: "gpt-oss:120b-cloud:latest" }] }));
-                return;
-            }
-
-            res.statusCode = 404;
-            res.end();
-        });
-        cleaners.push(server.close);
+            return new Response(JSON.stringify({
+                models: [{ name: "gpt-oss:120b-cloud:latest" }]
+            }), {
+                status: 200,
+                headers: { "content-type": "application/json" }
+            });
+        }));
 
         const content = await ollamaChat({
-            host: server.host,
+            host: "http://localhost:11434",
             model: "gpt-oss:120b-cloud",
             messages: [{ role: "user", content: "hello" }],
             json: true,
@@ -77,22 +46,26 @@ describe("ollama helpers", () => {
     });
 
     it("throws a timeout error when the server is too slow", async () => {
-        const server = await startServer((req, res) => {
-            if (req.url === "/api/chat" && req.method === "POST") {
-                setTimeout(() => {
-                    res.setHeader("content-type", "application/json");
-                    res.end(JSON.stringify({ message: { content: "{\"message\":\"feat: late response\"}" } }));
+        vi.stubGlobal("fetch", vi.fn().mockImplementation((_: string | URL, init?: RequestInit) => {
+            return new Promise<Response>((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    resolve(new Response(JSON.stringify({
+                        message: { content: "{\"message\":\"feat: late response\"}" }
+                    }), {
+                        status: 200,
+                        headers: { "content-type": "application/json" }
+                    }));
                 }, 120);
-                return;
-            }
 
-            res.statusCode = 404;
-            res.end();
-        });
-        cleaners.push(server.close);
+                init?.signal?.addEventListener("abort", () => {
+                    clearTimeout(timer);
+                    reject(new DOMException("Aborted", "AbortError"));
+                });
+            });
+        }));
 
         await expect(() => ollamaChat({
-            host: server.host,
+            host: "http://localhost:11434",
             model: "gpt-oss:120b-cloud",
             messages: [{ role: "user", content: "hello" }],
             json: true,
@@ -102,19 +75,14 @@ describe("ollama helpers", () => {
     });
 
     it("fails model readiness check when local model is missing", async () => {
-        const server = await startServer((req, res) => {
-            if (req.url === "/api/tags" && req.method === "GET") {
-                res.setHeader("content-type", "application/json");
-                res.end(JSON.stringify({ models: [{ name: "mistral:latest" }] }));
-                return;
-            }
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+            models: [{ name: "mistral:latest" }]
+        }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+        })));
 
-            res.statusCode = 404;
-            res.end();
-        });
-        cleaners.push(server.close);
-
-        await expect(() => ensureLocalModel(server.host, "gpt-oss:120b-cloud", 1000))
+        await expect(() => ensureLocalModel("http://localhost:11434", "gpt-oss:120b-cloud", 1000))
             .rejects
             .toMatchObject<OllamaError>({ code: "MODEL_NOT_FOUND" });
     });
