@@ -12,6 +12,7 @@ import { ExitCode, EXIT_CODE_LABEL } from "./exit-codes.js";
 import { getGitDir, getRepoRoot, hasStagedChanges, isGitRepo } from "./git.js";
 import { ensureLocalModel, OllamaError } from "./ollama.js";
 import { buildSuccessResult, commitMessage, ensureValid, getAlternatives, maybeRecordHistory } from "./finalize.js";
+import { resolveCommitPolicy, type CommitPolicy } from "./policy.js";
 import { generateCandidates } from "./candidates.js";
 import { loadRepoContext } from "./repo-context-loader.js";
 import { normalizeErrorMessage, normalizeScopeName } from "./util.js";
@@ -90,6 +91,7 @@ export type ResolvedWorkflowOptions = {
     ticketPattern: string;
     defaultScope: string | null;
     knownScopes: string[];
+    policy: CommitPolicy;
 };
 
 export type RepoContext = {
@@ -109,6 +111,7 @@ export function resolveWorkflowOptions(
     options: WorkflowOptions,
     repoConfig: RepoConfig
 ): ResolvedWorkflowOptions {
+    const policy = resolveCommitPolicy(repoConfig);
     const requestedCandidates = options.candidates
         ?? 1;
 
@@ -143,7 +146,12 @@ export function resolveWorkflowOptions(
         historySampleSize,
         ticketPattern: repoConfig.ticketPattern ?? DEFAULT_TICKET_PATTERN,
         defaultScope: normalizeScopeName(repoConfig.defaultScope),
-        knownScopes: repoConfig.scopes ?? []
+        knownScopes: [...new Set([
+            ...(repoConfig.scopes ?? []),
+            ...policy.requiredScopes,
+            ...Object.values(policy.scopeMap)
+        ])],
+        policy
     };
 }
 
