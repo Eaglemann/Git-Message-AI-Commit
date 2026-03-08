@@ -1,6 +1,7 @@
 import { ExitCode } from "./exit-codes.js";
 import { gitCommit } from "./git.js";
 import { appendHistory } from "./history.js";
+import { extractTicketFromMessage } from "./policy.js";
 import { normalizeErrorMessage } from "./util.js";
 import { parseConventionalSubject } from "./validation.js";
 import { WorkflowError } from "./workflow-errors.js";
@@ -22,6 +23,7 @@ export function buildSuccessResult(
     committed: boolean,
     cancelled: boolean,
     context: RepoContext,
+    ticketPattern: string,
     alternatives: string[]
 ): SuccessResult {
     return {
@@ -32,7 +34,7 @@ export function buildSuccessResult(
         committed,
         cancelled,
         scope: getMessageScope(message),
-        ticket: context.ticket,
+        ticket: extractTicketFromMessage(message, ticketPattern),
         alternatives: alternatives.length > 0 ? alternatives : undefined
     };
 }
@@ -75,7 +77,7 @@ export async function maybeRecordHistory(
             message,
             edited,
             scope: getMessageScope(message),
-            ticket: context.ticket,
+            ticket: extractTicketFromMessage(message, options.ticketPattern),
             files: context.files
         });
     } catch {

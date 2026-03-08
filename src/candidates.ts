@@ -1,16 +1,32 @@
 import { ollamaChat } from "./ollama.js";
-import { lintCommitMessage } from "./policy.js";
+import { extractTicketFromMessage, lintCommitMessage } from "./policy.js";
 import { buildMessages } from "./prompt.js";
 import { rankCandidates, type RankedCandidate } from "./ranking.js";
 import {
+    appendTicketFooter,
     extractMessageFromModelOutput,
     extractMessageListFromModelOutput,
     normalizeMessage,
+    parseConventionalSubject,
     repairMessage
 } from "./validation.js";
 import type { RepoContext, ResolvedWorkflowOptions } from "./workflow.js";
 
 type CandidateDraft = Omit<RankedCandidate, "score">;
+
+function normalizeFeedback(feedback: string): string {
+    return feedback.trim().toLowerCase();
+}
+
+function requestsTicketRemoval(feedback: string): boolean {
+    const normalized = normalizeFeedback(feedback);
+    return /\b(remove|drop|omit|delete|without)\b/.test(normalized) && /\bticket\b|\bfooter\b/.test(normalized);
+}
+
+function requestsScopeRemoval(feedback: string): boolean {
+    const normalized = normalizeFeedback(feedback);
+    return /\b(remove|drop|omit|delete|without)\b/.test(normalized) && /\bscope\b/.test(normalized);
+}
 
 function toCandidateDraft(
     rawMessage: string,
@@ -30,6 +46,66 @@ function toCandidateDraft(
     return {
         message,
         source: repaired.didRepair ? "repaired" : "model",
+        validation: lintResult.ok
+            ? { ok: true }
+            : { ok: false, reason: lintResult.errors[0] ?? "Invalid commit message" }
+    };
+}
+
+function resolveRevisionScope(
+    revisedMessage: string,
+    currentMessage: string,
+    context: RepoContext,
+    options: ResolvedWorkflowOptions,
+    feedback: string
+): string | null {
+    if (options.scope) return options.scope;
+    const revisedScope = parseConventionalSubject(revisedMessage.split("\n")[0]?.trim() ?? "")?.scope;
+    const currentScope = parseConventionalSubject(currentMessage.split("\n")[0]?.trim() ?? "")?.scope;
+    const requiredScopes = new Set(options.policy.requiredScopes);
+
+    if (options.policy.requiredScopes.length === 0) {
+        if (revisedScope) return null;
+        if (requestsScopeRemoval(feedback)) return null;
+        return currentScope ?? null;
+    }
+
+    if (revisedScope && requiredScopes.has(revisedScope)) return revisedScope;
+    if (currentScope && requiredScopes.has(currentScope)) return currentScope;
+    if (context.effectiveScope && requiredScopes.has(context.effectiveScope)) return context.effectiveScope;
+    return options.policy.requiredScopes[0] ?? null;
+}
+
+function toRevisedCandidateDraft(
+    rawMessage: string,
+    currentMessage: string,
+    context: RepoContext,
+    options: ResolvedWorkflowOptions,
+    feedback: string
+): CandidateDraft {
+    const repaired = repairMessage({
+        message: rawMessage,
+        diff: context.diff,
+        forcedType: options.type,
+        scope: resolveRevisionScope(rawMessage, currentMessage, context, options, feedback),
+        ticket: options.ticket
+    });
+
+    let message = normalizeMessage(repaired.message);
+    const detectedTicket = extractTicketFromMessage(message, options.ticketPattern);
+    const currentTicket = extractTicketFromMessage(currentMessage, options.ticketPattern);
+    if (!detectedTicket) {
+        if (options.policy.requireTicket && context.ticket) {
+            message = appendTicketFooter(message, context.ticket);
+        } else if (currentTicket && !requestsTicketRemoval(feedback)) {
+            message = appendTicketFooter(message, currentTicket);
+        }
+    }
+
+    const lintResult = lintCommitMessage(message, options.policy, options.ticketPattern);
+    return {
+        message,
+        source: repaired.didRepair || message !== normalizeMessage(rawMessage) ? "repaired" : "model",
         validation: lintResult.ok
             ? { ok: true }
             : { ok: false, reason: lintResult.errors[0] ?? "Invalid commit message" }
@@ -138,7 +214,13 @@ export async function reviseCandidate(
         currentMessage,
         feedback
     });
-    const candidate = toCandidateDraft(extractMessageFromModelOutput(raw), context, options);
+    const candidate = toRevisedCandidateDraft(
+        extractMessageFromModelOutput(raw),
+        currentMessage,
+        context,
+        options,
+        feedback
+    );
     return {
         ...candidate,
         score: rankCandidates([candidate], {

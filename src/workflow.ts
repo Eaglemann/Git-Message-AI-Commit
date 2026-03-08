@@ -205,6 +205,7 @@ async function runNonInteractive(
             false,
             false,
             context,
+            options.ticketPattern,
             alternatives
         );
     }
@@ -218,6 +219,7 @@ async function runNonInteractive(
         true,
         false,
         context,
+        options.ticketPattern,
         alternatives
     );
 }

@@ -66,7 +66,7 @@ function getMessageBody(message: string): string {
     return normalizeMessage(message.split("\n").slice(1).join("\n"));
 }
 
-function extractTicket(message: string, ticketPattern: string): string | null {
+export function extractTicketFromMessage(message: string, ticketPattern: string): string | null {
     const match = message.match(new RegExp(ticketPattern));
     if (!match) return null;
 
@@ -82,7 +82,7 @@ export function lintCommitMessage(
     const normalizedMessage = normalizeMessage(message);
     const subject = normalizedMessage.split("\n")[0]?.trim() ?? "";
     const parsedSubject = parseConventionalSubject(subject);
-    const ticket = extractTicket(normalizedMessage, ticketPattern);
+    const ticket = extractTicketFromMessage(normalizedMessage, ticketPattern);
 
     const errors: string[] = [];
     const baseValidation = validateMessage(normalizedMessage, {

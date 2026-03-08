@@ -1,8 +1,9 @@
 import prompts from "prompts";
 import { ExitCode } from "./exit-codes.js";
 import { getAlternatives, buildSuccessResult, commitMessage, maybeRecordHistory } from "./finalize.js";
+import { lintCommitMessage } from "./policy.js";
 import { type RankedCandidate } from "./ranking.js";
-import { normalizeMessage, validateMessage } from "./validation.js";
+import { normalizeMessage, type ValidationResult } from "./validation.js";
 import { WorkflowError } from "./workflow-errors.js";
 import { generateCandidates, reviseCandidate } from "./candidates.js";
 import type { RepoContext, ResolvedWorkflowOptions, SuccessResult } from "./workflow.js";
@@ -104,13 +105,28 @@ function printSelectedCandidate(candidate: RankedCandidate): void {
     console.log("\n-------------------------------\n");
 }
 
-function createCandidateFromMessage(base: RankedCandidate, message: string, source?: RankedCandidate["source"]): RankedCandidate {
+function validateCandidateMessage(
+    message: string,
+    options: ResolvedWorkflowOptions
+): ValidationResult {
+    const lintResult = lintCommitMessage(message, options.policy, options.ticketPattern);
+    return lintResult.ok
+        ? { ok: true }
+        : { ok: false, reason: lintResult.errors[0] ?? "Invalid commit message" };
+}
+
+function createCandidateFromMessage(
+    base: RankedCandidate,
+    message: string,
+    options: ResolvedWorkflowOptions,
+    source?: RankedCandidate["source"]
+): RankedCandidate {
     const normalized = normalizeMessage(message);
     return {
         ...base,
         message: normalized,
         source: source ?? (normalized === base.message ? base.source : "repaired"),
-        validation: validateMessage(normalized)
+        validation: validateCandidateMessage(normalized, options)
     };
 }
 
@@ -128,6 +144,7 @@ async function handleFinalAction(
             false,
             true,
             context,
+            options.ticketPattern,
             alternatives
         );
     }
@@ -151,18 +168,23 @@ async function handleFinalAction(
                 false,
                 true,
                 context,
+                options.ticketPattern,
                 alternatives
             );
         }
 
-        finalCandidate = createCandidateFromMessage(candidate, editedMessage, "repaired");
+        finalCandidate = createCandidateFromMessage(candidate, editedMessage, options, "repaired");
         edited = true;
     }
 
-    const validation = validateMessage(finalCandidate.message);
+    const validation = validateCandidateMessage(finalCandidate.message, options);
     if (action === "accept" && !validation.ok && !options.allowInvalid) {
         console.error(`Cannot commit invalid message: ${validation.reason}`);
         console.error("Use Ask for change/Edit/Regenerate, or rerun with --allow-invalid to override.");
+        finalCandidate = {
+            ...finalCandidate,
+            validation
+        };
         return finalCandidate;
     }
 
@@ -173,6 +195,7 @@ async function handleFinalAction(
             false,
             false,
             context,
+            options.ticketPattern,
             alternatives
         );
     }
@@ -185,6 +208,7 @@ async function handleFinalAction(
         true,
         false,
         context,
+        options.ticketPattern,
         alternatives
     );
 }
@@ -250,6 +274,7 @@ async function runCandidateSelectionInteractive(
                     false,
                     true,
                     context,
+                    options.ticketPattern,
                     getAlternatives(candidates)
                 );
             }
