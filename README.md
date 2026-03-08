@@ -1,6 +1,6 @@
 # Commitgen-CC
 
-A CLI tool that uses a local [Ollama](https://ollama.com/) instance to generate Conventional Commits messages from your staged changes.
+A CLI tool that uses a local [Ollama](https://ollama.com/) instance to generate Conventional Commits messages from your staged changes. It can learn from recent accepted commits, infer scopes and ticket references from repo context, and rank multiple candidates before committing.
 
 ## Prerequisites
 
@@ -39,6 +39,10 @@ commitgen-cc
 - `--max-chars <n>`: Max diff characters sent (range: `500-200000`, default: `16000`)
 - `--type <type>`: Force a commit type (feat, fix, etc.)
 - `--scope <scope>`: Optional commit scope
+- `--config <path>`: Load config from a custom JSON file
+- `--candidates <n>`: Generate and rank between `1` and `5` candidates
+- `--ticket <id>`: Force a ticket reference such as `ABC-123`
+- `--no-history`: Disable local history examples and persistence
 - `--dry-run`: Print message to stdout without committing
 - `--ci`: Non-interactive mode for CI/hooks
 - `--allow-invalid`: Override validation and allow invalid messages
@@ -54,6 +58,28 @@ commitgen-cc
 - `GIT_AI_TIMEOUT_MS`
 - `GIT_AI_RETRIES`
 
+### Repo config
+
+Place a `.commitgen.json` file at the repo root to set project defaults:
+
+```json
+{
+  "model": "repo-model",
+  "host": "http://localhost:11434",
+  "maxChars": 12000,
+  "defaultScope": "cli",
+  "scopes": ["cli", "workflow", "docs"],
+  "ticketPattern": "([A-Z][A-Z0-9]+-\\d+)",
+  "historyEnabled": true,
+  "historySampleSize": 5,
+  "interactiveCandidates": 3
+}
+```
+
+Precedence is `CLI > env > repo config > defaults`.
+
+Accepted commit messages are stored in `.git/commitgen/history.jsonl` by default and are reused as prompt examples on later runs.
+
 ### CI usage
 
 Generate JSON output in non-interactive mode:
@@ -61,6 +87,26 @@ Generate JSON output in non-interactive mode:
 ```bash
 commitgen-cc --ci --dry-run --output json
 ```
+
+Generate three ranked candidates and keep machine-readable metadata:
+
+```bash
+commitgen-cc --ci --dry-run --output json --candidates 3
+```
+
+JSON success output now includes `scope`, `ticket`, and `alternatives` when available.
+
+## Automatic npm publish
+
+This repo now publishes automatically from GitHub Actions on every push to `main` after CI passes.
+
+Setup:
+
+1. Create an npm automation token for the package owner.
+2. Add it to the GitHub repo as the `NPM_TOKEN` Actions secret.
+3. Push to `main`.
+
+The workflow publishes only when the version in `package.json` is not already on npm. If you push without bumping the version, the publish job will skip instead of failing.
 
 ### Exit codes
 
