@@ -12,7 +12,7 @@ export async function loadRepoContext(
     const stagedDiff = await getStagedDiff();
     const files = await getStagedFiles();
     const branch = await getCurrentBranch();
-    const suggestedScope = inferScopeFromFiles(files);
+    const suggestedScope = inferScopeFromFiles(files, options.policy.scopeMap);
     const effectiveScope = options.scope ?? suggestedScope ?? options.defaultScope;
     const ticket = options.ticket ?? inferTicketFromBranch(branch, options.ticketPattern);
     const historyPath = options.historyEnabled ? resolveHistoryPath(gitDir) : null;
