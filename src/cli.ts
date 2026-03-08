@@ -1,11 +1,24 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { DEFAULT_RETRIES, DEFAULT_TIMEOUT_MS } from "./config.js";
+import { runDoctor } from "./doctor.js";
 import { ExitCode } from "./exit-codes.js";
 import { getMessageSubject } from "./finalize.js";
+import {
+    formatHookError,
+    formatHookInstallMessage,
+    formatHookUninstallMessage,
+    installHooks,
+    runCommitMsgHook,
+    runPrepareCommitMsgHook,
+    uninstallHooks
+} from "./hooks.js";
+import { lintMessageFile, type LintMessageCommandResult } from "./lint-message.js";
+import { buildDefaultWorkflowOptions } from "./workflow-options.js";
 import { parseBoundedInteger } from "./util.js";
 import { isAllowedType, type AllowedType } from "./validation.js";
 import { runWorkflow, type OutputFormat, type WorkflowOptions, type WorkflowResult } from "./workflow.js";
+import { WorkflowError } from "./workflow-errors.js";
 
 const MIN_MAX_CHARS = 500;
 const MAX_MAX_CHARS = 200000;
@@ -35,10 +48,23 @@ type RawCliOptions = {
     history?: boolean;
 };
 
-function readEnv(name: string): string | null {
-    const value = process.env[name]?.trim();
-    return value && value.length > 0 ? value : null;
-}
+type RawLintOptions = {
+    file: string;
+    config?: string;
+    output?: string;
+};
+
+type RawHookOptions = {
+    config?: string;
+};
+
+type RawDoctorOptions = {
+    model?: string;
+    host?: string;
+    timeoutMs?: string;
+    retries?: string;
+    config?: string;
+};
 
 function parseOptionalBoundedInteger(
     value: string | undefined,
@@ -65,9 +91,11 @@ function parseType(value: string | undefined): AllowedType | null {
 }
 
 function buildOptions(raw: RawCliOptions, historyExplicit: boolean): WorkflowOptions {
+    const base = buildDefaultWorkflowOptions();
     return {
-        model: raw.model?.trim() ? raw.model.trim() : readEnv("GIT_AI_MODEL"),
-        host: raw.host?.trim() ? raw.host.trim() : readEnv("GIT_AI_HOST"),
+        ...base,
+        model: raw.model?.trim() ? raw.model.trim() : base.model,
+        host: raw.host?.trim() ? raw.host.trim() : base.host,
         maxChars: parseOptionalBoundedInteger(raw.maxChars, "--max-chars", MIN_MAX_CHARS, MAX_MAX_CHARS),
         type: parseType(raw.type),
         scope: raw.scope?.trim() ? raw.scope.trim() : null,
@@ -75,23 +103,33 @@ function buildOptions(raw: RawCliOptions, historyExplicit: boolean): WorkflowOpt
         noVerify: raw.noVerify,
         ci: raw.ci,
         allowInvalid: raw.allowInvalid,
-        timeoutMs: parseBoundedInteger(
-            raw.timeoutMs ?? readEnv("GIT_AI_TIMEOUT_MS") ?? String(DEFAULT_TIMEOUT_MS),
-            "--timeout-ms",
-            MIN_TIMEOUT_MS,
-            MAX_TIMEOUT_MS
-        ),
-        retries: parseBoundedInteger(
-            raw.retries ?? readEnv("GIT_AI_RETRIES") ?? String(DEFAULT_RETRIES),
-            "--retries",
-            MIN_RETRIES,
-            MAX_RETRIES
-        ),
+        timeoutMs: raw.timeoutMs
+            ? parseBoundedInteger(raw.timeoutMs, "--timeout-ms", MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+            : base.timeoutMs,
+        retries: raw.retries
+            ? parseBoundedInteger(raw.retries, "--retries", MIN_RETRIES, MAX_RETRIES)
+            : base.retries,
         output: parseOutput((raw.output ?? "text").toLowerCase()),
         configPath: raw.config?.trim() ? raw.config.trim() : null,
         candidates: parseOptionalBoundedInteger(raw.candidates, "--candidates", MIN_CANDIDATES, MAX_CANDIDATES),
         ticket: raw.ticket?.trim() ? raw.ticket.trim() : null,
         history: historyExplicit ? (raw.history ?? null) : null
+    };
+}
+
+function buildDoctorOptions(raw: RawDoctorOptions): WorkflowOptions {
+    const base = buildDefaultWorkflowOptions();
+    return {
+        ...base,
+        model: raw.model?.trim() ? raw.model.trim() : base.model,
+        host: raw.host?.trim() ? raw.host.trim() : base.host,
+        timeoutMs: raw.timeoutMs
+            ? parseBoundedInteger(raw.timeoutMs, "--timeout-ms", MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+            : base.timeoutMs,
+        retries: raw.retries
+            ? parseBoundedInteger(raw.retries, "--retries", MIN_RETRIES, MAX_RETRIES)
+            : base.retries,
+        configPath: raw.config?.trim() ? raw.config.trim() : null
     };
 }
 
@@ -145,7 +183,62 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
     if (result.hint) console.error(result.hint);
 }
 
-async function main(): Promise<void> {
+function printLintResult(result: LintMessageCommandResult, output: OutputFormat): void {
+    if (output === "json") {
+        if (result.ok) {
+            console.log(JSON.stringify({
+                status: "ok",
+                message: result.message,
+                subject: result.subject,
+                type: result.type,
+                scope: result.scope,
+                ticket: result.ticket
+            }));
+            return;
+        }
+
+        console.log(JSON.stringify({
+            status: "error",
+            code: result.code,
+            message: result.message,
+            errors: result.errors
+        }));
+        return;
+    }
+
+    if (result.ok) {
+        console.log("Commit message is valid.");
+        console.log(result.subject);
+        return;
+    }
+
+    console.error(result.message);
+    for (const error of result.errors) {
+        console.error(`- ${error}`);
+    }
+}
+
+function printDoctorResult(result: Awaited<ReturnType<typeof runDoctor>>): void {
+    for (const check of result.checks) {
+        const label = check.ok ? "OK" : "FAIL";
+        console.log(`[${label}] ${check.name}: ${check.detail}`);
+    }
+}
+
+function getCommandErrorExitCode(error: unknown, fallback: number): number {
+    if (error instanceof WorkflowError) return error.exitCode;
+    return fallback;
+}
+
+function getCliEntrypoint(): string {
+    return fileURLToPath(import.meta.url);
+}
+
+function getSubcommandArgv(commandName: string): string[] {
+    return [process.argv[0] ?? "node", commandName, ...process.argv.slice(3)];
+}
+
+async function runGenerateCommand(): Promise<number> {
     const program = new Command();
     program
         .name("commitgen-cc")
@@ -175,7 +268,7 @@ async function main(): Promise<void> {
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(message);
-        process.exit(ExitCode.UsageError);
+        return ExitCode.UsageError;
     }
 
     const result = await runWorkflow(options);
@@ -185,10 +278,152 @@ async function main(): Promise<void> {
         printText(result, options);
     }
 
-    process.exit(result.exitCode);
+    return result.exitCode;
 }
 
-main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.stack : String(error));
-    process.exit(ExitCode.InternalError);
-});
+async function runInstallHookCommand(): Promise<number> {
+    const program = new Command();
+    program
+        .name("commitgen-cc install-hook")
+        .description("Install repo-local prepare-commit-msg and commit-msg hooks")
+        .option("--config <path>", "Path to a commitgen config file used by the installed hooks")
+        .parse(getSubcommandArgv("install-hook"));
+
+    const options = program.opts<RawHookOptions>();
+
+    try {
+        const installed = await installHooks(
+            getCliEntrypoint(),
+            process.execPath,
+            options.config?.trim() ? options.config.trim() : null
+        );
+        console.log(formatHookInstallMessage(installed));
+        return ExitCode.Success;
+    } catch (error: unknown) {
+        console.error(formatHookError(error));
+        if (error instanceof WorkflowError && error.hint) console.error(error.hint);
+        return getCommandErrorExitCode(error, ExitCode.UsageError);
+    }
+}
+
+async function runUninstallHookCommand(): Promise<number> {
+    const program = new Command();
+    program
+        .name("commitgen-cc uninstall-hook")
+        .description("Remove commitgen-managed local git hooks")
+        .parse(getSubcommandArgv("uninstall-hook"));
+
+    try {
+        const removed = await uninstallHooks();
+        console.log(formatHookUninstallMessage(removed));
+        return ExitCode.Success;
+    } catch (error: unknown) {
+        console.error(formatHookError(error));
+        return getCommandErrorExitCode(error, ExitCode.UsageError);
+    }
+}
+
+async function runLintMessageCommand(): Promise<number> {
+    const program = new Command();
+    program
+        .name("commitgen-cc lint-message")
+        .description("Validate a commit message file against Conventional Commits and repo policy")
+        .requiredOption("--file <path>", "Path to the commit message file")
+        .option("--config <path>", "Path to a commitgen config file")
+        .option("--output <format>", "Output format (text|json)", "text")
+        .parse(getSubcommandArgv("lint-message"));
+
+    try {
+        const options = program.opts<RawLintOptions>();
+        const output = parseOutput((options.output ?? "text").toLowerCase());
+        const result = await lintMessageFile(options.file, options.config?.trim() ? options.config.trim() : null);
+        printLintResult(result, output);
+        return result.exitCode;
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(message);
+        return ExitCode.UsageError;
+    }
+}
+
+async function runDoctorCommand(): Promise<number> {
+    const program = new Command();
+    program
+        .name("commitgen-cc doctor")
+        .description("Verify Node, repo, config, Ollama, and model availability")
+        .option("-m, --model <name>", "Ollama model name override")
+        .option("--host <url>", "Ollama host override")
+        .option("--config <path>", "Path to a commitgen config file")
+        .option("--timeout-ms <n>", `Ollama request timeout in milliseconds (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS})`)
+        .option("--retries <n>", `Retry count for transient Ollama failures (${MIN_RETRIES}-${MAX_RETRIES})`)
+        .parse(getSubcommandArgv("doctor"));
+
+    try {
+        const options = buildDoctorOptions(program.opts<RawDoctorOptions>());
+        const result = await runDoctor(options);
+        printDoctorResult(result);
+        return result.exitCode;
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(message);
+        return ExitCode.UsageError;
+    }
+}
+
+async function runInternalHookCommand(): Promise<number> {
+    const hookName = process.argv[3];
+    const configPath = process.env.COMMITGEN_CONFIG_PATH?.trim() || null;
+
+    if (hookName === "prepare-commit-msg") {
+        const messageFile = process.argv[4];
+        const source = process.argv[5];
+        if (!messageFile) {
+            console.error("Missing prepare-commit-msg file path.");
+            return ExitCode.UsageError;
+        }
+        return await runPrepareCommitMsgHook(messageFile, source);
+    }
+
+    if (hookName === "commit-msg") {
+        const messageFile = process.argv[4];
+        if (!messageFile) {
+            console.error("Missing commit-msg file path.");
+            return ExitCode.UsageError;
+        }
+        return await runCommitMsgHook(messageFile, configPath);
+    }
+
+    console.error(`Unknown internal hook "${hookName ?? ""}".`);
+    return ExitCode.UsageError;
+}
+
+async function main(): Promise<number> {
+    const command = process.argv[2];
+
+    if (command === "install-hook") {
+        return await runInstallHookCommand();
+    }
+    if (command === "uninstall-hook") {
+        return await runUninstallHookCommand();
+    }
+    if (command === "doctor") {
+        return await runDoctorCommand();
+    }
+    if (command === "lint-message") {
+        return await runLintMessageCommand();
+    }
+    if (command === "__internal-hook") {
+        return await runInternalHookCommand();
+    }
+
+    return await runGenerateCommand();
+}
+
+main()
+    .then((exitCode) => {
+        process.exit(exitCode);
+    })
+    .catch((error: unknown) => {
+        console.error(error instanceof Error ? error.stack : String(error));
+        process.exit(ExitCode.InternalError);
+    });
