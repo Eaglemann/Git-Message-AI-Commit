@@ -96,9 +96,9 @@ commitgen-cc --ci --dry-run --output json --candidates 3
 
 JSON success output now includes `scope`, `ticket`, and `alternatives` when available.
 
-## Automatic npm publish
+## Releases and npm publish
 
-This repo publishes automatically from GitHub Actions on pushes to `main` after CI passes, using npm trusted publishing via GitHub OIDC.
+This repo runs CI on pushes/PRs, and publishes only when you push a version tag. The release workflow uses npm trusted publishing via GitHub OIDC and also creates a GitHub Release for that same tag.
 
 Setup:
 
@@ -106,18 +106,24 @@ Setup:
 2. Add a Trusted Publisher for GitHub Actions with:
    - owner: `Eaglemann`
    - repository: `commitgen-cc`
-   - workflow filename: `ci.yml`
-   - branch: `main`
-3. Push to `main` from this repository.
+   - workflow filename: `release.yml`
+3. Save the change. npm only allows one trusted publisher per package, so this should replace any previous `ci.yml` entry.
 
-The workflow publishes only when the version in `package.json` is not already on npm. If you push without bumping the version, the publish job will skip instead of failing.
+Release flow:
+
+```bash
+npm version patch
+git push origin main --follow-tags
+```
+
+That creates a tag like `v3.1.1`, pushes it, runs the release workflow, publishes the package if that version is not already on npm, and creates a GitHub Release with the packed tarball attached.
 
 Notes:
 
 - No `NPM_TOKEN` GitHub secret is required for trusted publishing.
-- The workflow file name matters. npm must trust `ci.yml` exactly.
-- The publish job upgrades npm to meet the current trusted-publishing minimum before running `npm publish --provenance`.
-- If you later rename the workflow file or split publishing into a different workflow, you must update the trusted publisher configuration on npm.
+- The workflow file name matters. npm must trust `release.yml` exactly.
+- The tag must match `package.json` exactly. Example: package version `3.1.1` must be pushed as tag `v3.1.1`.
+- If you later rename the workflow file, npm must be updated to trust the new filename.
 
 ### Exit codes
 
