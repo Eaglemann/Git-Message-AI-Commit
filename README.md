@@ -1,72 +1,198 @@
 # Commitgen-CC
 
-A CLI tool that uses a local [Ollama](https://ollama.com/) instance to generate Conventional Commits messages from your staged changes. It can learn from recent accepted commits, infer scopes and ticket references from repo context, and rank multiple candidates before committing.
+`commitgen-cc` reads your staged git changes and uses a local [Ollama](https://ollama.com/) model to generate a Conventional Commit message. The normal flow is simple: stage files, run `commitgen-cc`, review the suggested message, then accept, edit, regenerate, or cancel.
 
-## Prerequisites
+It can also run in dry-run mode, emit JSON for CI, remember recent accepted commit messages, and install git hooks for team workflows.
 
-- [Node.js](https://nodejs.org/) (v20+)
-- [Ollama](https://ollama.com/) running locally (default: `http://localhost:11434`)
+## Quick Start
+
+You need:
+
+- [Node.js](https://nodejs.org/) `v20+`
 - `git`
+- [Ollama](https://ollama.com/) installed locally
 
-## Installation
+Minimum successful setup:
 
 ```bash
-# Global installation
+# 1. Start Ollama if it is not already running
+ollama serve
+
+# 2. Pull the default model once
+ollama pull gpt-oss:120b-cloud
+
+# 3. Install commitgen-cc
 npm install -g commitgen-cc
 
-# Or run directly with npx
-npx commitgen-cc
-```
-
-## Usage
-
-Stage your changes:
-
-```bash
+# 4. Stage your changes inside a git repo
 git add .
-```
 
-Run the tool:
-
-```bash
+# 5. Generate a commit message
 commitgen-cc
 ```
 
-### Options
+If anything fails, start with:
 
-- `-m, --model <name>`: Specify Ollama model (default: `gpt-oss:120b-cloud`)
-- `--host <url>`: Ollama host (default: `http://localhost:11434`)
-- `--max-chars <n>`: Max diff characters sent (range: `500-200000`, default: `16000`)
-- `--type <type>`: Force a commit type (feat, fix, etc.)
-- `--scope <scope>`: Optional commit scope
-- `--config <path>`: Load config from a custom JSON file
-- `--candidates <n>`: Generate and rank between `1` and `5` candidates; use `> 1` to opt into multi-candidate interactive mode
-- `--ticket <id>`: Force a ticket reference such as `ABC-123`
-- `--no-history`: Disable local history examples and persistence
-- `--dry-run`: Print message to stdout without committing
-- `--ci`: Non-interactive mode for CI/hooks
-- `--allow-invalid`: Override validation and allow invalid messages
-- `--timeout-ms <n>`: Ollama request timeout in milliseconds (range: `1000-300000`, default: `60000`)
-- `--retries <n>`: Retry count for transient Ollama failures (range: `0-5`, default: `2`)
-- `--output <text|json>`: Output format (default: `text`)
-- `--no-verify`: Pass `--no-verify` to `git commit`
+```bash
+commitgen-cc doctor
+```
 
-### Environment variables
+## Ollama Setup
 
-- `GIT_AI_MODEL`
-- `GIT_AI_HOST`
-- `GIT_AI_TIMEOUT_MS`
-- `GIT_AI_RETRIES`
+`commitgen-cc` is local-first. It does not call a hosted OpenAI-style API. It expects an Ollama server running on your machine.
 
-### Repo config
+Defaults:
 
-Place a `.commitgen.json` file at the repo root to set project defaults:
+- Host: `http://localhost:11434`
+- Model: `gpt-oss:120b-cloud`
+
+Common Ollama commands:
+
+```bash
+# Start the local Ollama server
+ollama serve
+
+# Pull the default model used by commitgen-cc
+ollama pull gpt-oss:120b-cloud
+```
+
+When to override the defaults:
+
+- Use `--host` or `GIT_AI_HOST` if Ollama is running on a different address.
+- Use `--model` or `GIT_AI_MODEL` if you want a different local model.
+- Use `--timeout-ms` if your local model is slow.
+
+First troubleshooting command:
+
+```bash
+commitgen-cc doctor
+```
+
+`doctor` checks Node, git context, config loading, Ollama reachability, and whether the configured model exists locally.
+
+## Install and Run
+
+### Recommended install
+
+For daily use:
+
+```bash
+npm install -g commitgen-cc
+```
+
+### One-off usage
+
+For a quick one-time run:
+
+```bash
+npx commitgen-cc
+```
+
+`npx commitgen-cc` is fine for one-off usage. For persistent workflows such as git hooks, use a regular install so the executable path stays stable.
+
+### Optional alias
+
+If you want a shorter command, add an alias to your shell config:
+
+```bash
+alias aic="commitgen-cc"
+```
+
+Then reload your shell and run:
+
+```bash
+aic
+```
+
+### Main command options
+
+These are the primary options for `commitgen-cc` itself:
+
+| Option | Purpose |
+| --- | --- |
+| `-m, --model <name>` | Override the Ollama model name |
+| `--host <url>` | Override the Ollama host |
+| `--max-chars <n>` | Limit how much staged diff text is sent to the model |
+| `--type <type>` | Force the commit type |
+| `--scope <scope>` | Force the commit scope |
+| `--config <path>` | Load a custom config file |
+| `--candidates <n>` | Generate between `1` and `5` ranked candidates |
+| `--ticket <id>` | Force a ticket such as `ABC-123` |
+| `--no-history` | Disable local history examples and history writes |
+| `--dry-run` | Print the message without committing |
+| `--ci` | Use non-interactive mode |
+| `--allow-invalid` | Allow an invalid message instead of blocking it |
+| `--timeout-ms <n>` | Set the Ollama request timeout |
+| `--retries <n>` | Retry transient Ollama failures |
+| `--output <text|json>` | Choose text or JSON output |
+| `--no-verify` | Pass `--no-verify` to `git commit` |
+
+## Common Usage Examples
+
+### Normal interactive use
+
+```bash
+git add .
+commitgen-cc
+```
+
+By default, interactive mode generates one best message and lets you accept it, ask for a change, edit it, regenerate it, dry-run it, or cancel.
+
+### Print the message without committing
+
+```bash
+commitgen-cc --dry-run
+```
+
+### Generate machine-readable output for CI or scripts
+
+```bash
+commitgen-cc --ci --dry-run --output json
+```
+
+### Ask for multiple candidates
+
+This is advanced/optional. The default interactive flow uses one best message.
+
+```bash
+commitgen-cc --candidates 3
+```
+
+### Force type, scope, or ticket
+
+```bash
+commitgen-cc --type fix --scope cli --ticket ABC-123
+```
+
+## Environment Variables
+
+CLI flags override environment variables. Environment variables are useful when you want a persistent local default.
+
+| Variable | What it changes | Default if unset | Use when |
+| --- | --- | --- | --- |
+| `GIT_AI_MODEL` | Default Ollama model | `gpt-oss:120b-cloud` | You usually want the same local model |
+| `GIT_AI_HOST` | Default Ollama host | `http://localhost:11434` | Ollama runs on a different host or port |
+| `GIT_AI_TIMEOUT_MS` | Default request timeout | `60000` | Your model is slower than the default timeout |
+| `GIT_AI_RETRIES` | Default retry count | `2` | You want more or fewer retries for transient Ollama failures |
+
+Example:
+
+```bash
+export GIT_AI_MODEL="llama3.1"
+export GIT_AI_TIMEOUT_MS="120000"
+```
+
+## Repo Config
+
+Use a `.commitgen.json` file in the repo root when you want project-level defaults.
+
+Basic example:
 
 ```json
 {
-  "model": "repo-model",
+  "model": "gpt-oss:120b-cloud",
   "host": "http://localhost:11434",
-  "maxChars": 12000,
+  "maxChars": 16000,
   "defaultScope": "cli",
   "scopes": ["cli", "workflow", "docs"],
   "ticketPattern": "([A-Z][A-Z0-9]+-\\d+)",
@@ -75,41 +201,130 @@ Place a `.commitgen.json` file at the repo root to set project defaults:
 }
 ```
 
-Precedence is `CLI > env > repo config > defaults`.
+Resolution order:
 
-Accepted commit messages are stored in `.git/commitgen/history.jsonl` by default and are reused as prompt examples on later runs.
+`CLI flags > environment variables > repo config > built-in defaults`
 
-### CI usage
+History behavior:
 
-Generate JSON output in non-interactive mode:
+- Accepted commit messages are stored in `.git/commitgen/history.jsonl`
+- Those recent messages are reused as local examples on later runs
+- Use `--no-history` if you do not want to read or write local history
+
+### Team policy keys
+
+These keys are mainly for hooks and CI enforcement:
+
+| Key | Meaning |
+| --- | --- |
+| `hookMode` | `suggest` or `enforce` |
+| `requireTicket` | Require the final message to reference a ticket |
+| `allowedTypes` | Restrict allowed Conventional Commit types |
+| `requiredScopes` | Restrict allowed scopes and require a scope when set |
+| `scopeMap` | Map changed path prefixes to preferred scopes |
+| `subjectMaxLength` | Override the subject length limit |
+| `bodyRequiredTypes` | Require a commit body for selected types |
+
+Example with team policy:
+
+```json
+{
+  "hookMode": "enforce",
+  "requireTicket": true,
+  "allowedTypes": ["feat", "fix", "docs", "refactor"],
+  "requiredScopes": ["cli", "workflow", "docs"],
+  "scopeMap": {
+    "src/cli": "cli",
+    "src/workflow": "workflow",
+    "docs": "docs"
+  },
+  "subjectMaxLength": 72,
+  "bodyRequiredTypes": ["feat", "refactor"]
+}
+```
+
+## Team Workflow
+
+`commitgen-cc` can install repo-local hooks into `.git/hooks`.
+
+Available team commands:
+
+- `commitgen-cc install-hook`
+- `commitgen-cc uninstall-hook`
+- `commitgen-cc doctor`
+- `commitgen-cc lint-message --file <path>`
+
+### Install hooks
+
+```bash
+commitgen-cc install-hook
+```
+
+Install hooks with a custom config file:
+
+```bash
+commitgen-cc install-hook --config .commitgen.team.json
+```
+
+### What the hooks do
+
+- `prepare-commit-msg` tries to generate a message when no message was supplied
+- `commit-msg` validates the final message
+- `commit-msg` only blocks commits when `hookMode` is set to `enforce`
+- `prepare-commit-msg` is best-effort and does not hard-fail your commit if generation fails
+
+### Remove managed hooks
+
+```bash
+commitgen-cc uninstall-hook
+```
+
+### Validate a commit message file manually
+
+```bash
+commitgen-cc lint-message --file .git/COMMIT_EDITMSG
+commitgen-cc lint-message --file .git/COMMIT_EDITMSG --output json
+```
+
+## CI Usage
+
+### Generate JSON output
 
 ```bash
 commitgen-cc --ci --dry-run --output json
 ```
 
-Generate three ranked candidates and keep machine-readable metadata:
+With multiple ranked alternatives:
 
 ```bash
 commitgen-cc --ci --dry-run --output json --candidates 3
 ```
 
-JSON success output now includes `scope`, `ticket`, and `alternatives` when available.
+JSON success output can include:
 
-Interactive mode generates one best message by default. Pass `--candidates <n>` with `n > 1` to opt into multi-candidate selection.
+- `message`
+- `source`
+- `committed`
+- `scope`
+- `ticket`
+- `alternatives`
 
-## Releases and npm publish
+### Enforce the same policy in GitHub Actions
 
-This repo runs CI on pushes/PRs, and publishes only when you push a version tag. The release workflow uses npm trusted publishing via GitHub OIDC and also creates a GitHub Release for that same tag.
+You can write a commit title or PR title to a file and validate it with `lint-message`.
 
-Setup:
+Example:
 
-1. Open the npm package settings for `commitgen-cc`.
-2. Add a Trusted Publisher for GitHub Actions with:
-   - owner: `Eaglemann`
-   - repository: `commitgen-cc`
-   - workflow filename: `release.yml`
-   - environment: leave blank unless this workflow is later updated to use a GitHub Actions environment
-3. Save the change. npm only allows one trusted publisher per package, so this should replace any previous `ci.yml` entry or any old repo/workflow mapping.
+```yaml
+- name: Validate PR title
+  run: |
+    printf '%s\n' "${{ github.event.pull_request.title }}" > /tmp/commit-title.txt
+    npx commitgen-cc lint-message --file /tmp/commit-title.txt
+```
+
+## Maintainer Release Notes
+
+This repo uses a tag-based release workflow in `.github/workflows/release.yml`.
 
 Release flow:
 
@@ -118,33 +333,37 @@ npm version patch
 git push origin main --follow-tags
 ```
 
-That creates a tag like `v3.1.1`, pushes it, runs the release workflow, publishes the package if that version is not already on npm, and creates a GitHub Release with the packed tarball attached.
+That:
+
+- creates a tag such as `v3.1.4`
+- pushes the tag
+- runs the release workflow
+- runs checks before publishing
+- publishes to npm if that version is not already published
+- creates or updates the GitHub Release for that tag
+
+### npm trusted publishing
+
+The npm package should trust this exact GitHub Actions workflow:
+
+- owner: `Eaglemann`
+- repository: `commitgen-cc`
+- workflow filename: `release.yml`
+- environment: blank unless the workflow is later updated to use a GitHub Actions environment
 
 Notes:
 
-- No `NPM_TOKEN` GitHub secret is required for trusted publishing.
-- The workflow file name matters. npm must trust `release.yml` exactly.
-- npm only allows one trusted publisher per package, so `release.yml` must be the only active trusted publisher entry for this package.
-- The tag must match `package.json` exactly. Example: package version `3.1.1` must be pushed as tag `v3.1.1`.
-- If `npm publish` still fails with `E404` after this fix, the trusted publisher details on npm are still mismatched with the package/repo/workflow.
-- If you later rename the workflow file, npm must be updated to trust the new filename.
+- No `NPM_TOKEN` GitHub secret is required
+- The workflow filename must match exactly
+- Only one trusted publisher can be active for the package
+- The pushed tag must match `package.json`, for example `v3.1.4` for version `3.1.4`
 
-### Exit codes
+## Exit Codes
 
 - `0`: success
 - `1`: usage/configuration error
-- `2`: git context error (not a repo or no staged changes)
+- `2`: git context error
 - `3`: Ollama/model error
-- `4`: invalid AI output (blocked by default)
+- `4`: invalid AI output or failed message validation
 - `5`: `git commit` failed
 - `6`: unexpected internal error
-
-## Tips
-
-### Set an alias
-
-You can set a shorter alias (e.g. `aic`) in your shell config (`.zshrc`, `.bashrc`, etc.):
-
-```bash
-alias aic="commitgen-cc"
-```
