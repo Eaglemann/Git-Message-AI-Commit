@@ -77,10 +77,15 @@ describe("buildMessages", () => {
             }
         });
 
-        expect(messages[1].content).toContain("Revise the existing commit message");
-        expect(messages[1].content).toContain("Current Message:");
-        expect(messages[1].content).toContain("feat(src): add baseline");
-        expect(messages[1].content).toContain("Revision Feedback:");
-        expect(messages[1].content).toContain("make it shorter");
+        expect(messages).toHaveLength(3);
+        expect(messages[0].content).toContain("You revise git commit messages precisely");
+        expect(messages[1]).toEqual({
+            role: "assistant",
+            content: "feat(src): add baseline"
+        });
+        expect(messages[2].content).toContain("User Request:");
+        expect(messages[2].content).toContain("make it shorter");
+        expect(messages[2].content).toContain("Constraints:");
+        expect(messages[2].content).not.toContain("Current Message:");
     });
 });

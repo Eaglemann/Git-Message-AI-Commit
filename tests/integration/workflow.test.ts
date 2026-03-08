@@ -225,6 +225,44 @@ describe("runWorkflow", () => {
         expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(2);
     });
 
+    it("lets revision remove inferred scope and ticket", async () => {
+        promptsMock
+            .mockResolvedValueOnce({ action: "revise" })
+            .mockResolvedValueOnce({ feedback: "remove the scope and ticket" })
+            .mockResolvedValueOnce({ action: "accept" });
+        ollamaMock.ollamaChat
+            .mockResolvedValueOnce("{\"message\":\"feat: add baseline\"}")
+            .mockResolvedValueOnce("{\"message\":\"fix: tighten parser flow\"}");
+
+        const result = await runWorkflow(baseOptions({ ci: false }));
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.scope).toBeNull();
+            expect(result.ticket).toBeNull();
+        }
+        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix: tighten parser flow", { noVerify: false });
+    });
+
+    it("keeps an explicit CLI ticket during revision even when the user removes it", async () => {
+        promptsMock
+            .mockResolvedValueOnce({ action: "revise" })
+            .mockResolvedValueOnce({ feedback: "remove the ticket footer" })
+            .mockResolvedValueOnce({ action: "accept" });
+        ollamaMock.ollamaChat
+            .mockResolvedValueOnce("{\"message\":\"feat: add baseline\"}")
+            .mockResolvedValueOnce("{\"message\":\"fix: tighten parser flow\"}");
+
+        const result = await runWorkflow(baseOptions({
+            ci: false,
+            ticket: "XYZ-999"
+        }));
+
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.ticket).toBe("XYZ-999");
+        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(src): tighten parser flow\n\nRefs XYZ-999", { noVerify: false });
+    });
+
     it("returns and persists the actual final scope when an edited message omits scope", async () => {
         promptsMock
             .mockResolvedValueOnce({ action: "edit" })
@@ -263,6 +301,24 @@ describe("runWorkflow", () => {
 
         expect(result.ok).toBe(true);
         expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an invalid revised message in the loop until the user cancels", async () => {
+        promptsMock
+            .mockResolvedValueOnce({ action: "revise" })
+            .mockResolvedValueOnce({ feedback: "make it invalid" })
+            .mockResolvedValueOnce({ action: "accept" })
+            .mockResolvedValueOnce({ action: "cancel" });
+        ollamaMock.ollamaChat
+            .mockResolvedValueOnce("{\"message\":\"feat: add baseline\"}")
+            .mockResolvedValueOnce("{\"message\":\"not valid\"}");
+
+        const result = await runWorkflow(baseOptions({ ci: false }));
+
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.cancelled).toBe(true);
+        expect(gitMock.gitCommit).not.toHaveBeenCalled();
+        expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(2);
     });
 
     it("loops when interactive accept is invalid and then allows cancel", async () => {
