@@ -2,6 +2,7 @@
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { runDoctor } from "./doctor.js";
+import { formatExplainBlock } from "./explain-output.js";
 import { ExitCode } from "./exit-codes.js";
 import { getMessageSubject } from "./finalize.js";
 import {
@@ -39,6 +40,7 @@ type RawCliOptions = {
     noVerify: boolean;
     ci: boolean;
     allowInvalid: boolean;
+    explain: boolean;
     timeoutMs?: string;
     retries?: string;
     output?: string;
@@ -103,6 +105,7 @@ function buildOptions(raw: RawCliOptions, historyExplicit: boolean): WorkflowOpt
         noVerify: raw.noVerify,
         ci: raw.ci,
         allowInvalid: raw.allowInvalid,
+        explain: raw.explain,
         timeoutMs: raw.timeoutMs
             ? parseBoundedInteger(raw.timeoutMs, "--timeout-ms", MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
             : base.timeoutMs,
@@ -147,16 +150,30 @@ function printJson(result: WorkflowResult): void {
         if (result.alternatives && result.alternatives.length > 0) {
             payload.alternatives = result.alternatives;
         }
+        if (result.diagnostics) payload.diagnostics = result.diagnostics;
 
         console.log(JSON.stringify(payload));
         return;
     }
 
-    console.log(JSON.stringify({
+    const payload: Record<string, unknown> = {
         status: "error",
         code: result.code,
         hint: result.hint ?? result.message
-    }));
+    };
+    if (result.diagnostics) payload.diagnostics = result.diagnostics;
+    console.log(JSON.stringify(payload));
+}
+
+function printExplain(result: Extract<WorkflowResult, { ok: true }>): void {
+    if (!result.diagnostics?.selected) return;
+
+    console.log("");
+    console.log(formatExplainBlock(
+        result.diagnostics.context,
+        result.diagnostics.selected,
+        result.alternatives?.length ?? 0
+    ));
 }
 
 function printText(result: WorkflowResult, options: WorkflowOptions): void {
@@ -168,11 +185,13 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
 
         if (!result.committed) {
             console.log(result.message);
+            if (options.explain) printExplain(result);
             return;
         }
 
         if (options.ci) {
             console.log(result.message);
+            if (options.explain) printExplain(result);
         } else {
             console.log(`Committed: ${getMessageSubject(result.message)}`);
         }
@@ -181,6 +200,14 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
 
     console.error(result.message);
     if (result.hint) console.error(result.hint);
+    if (options.explain && result.diagnostics?.selected) {
+        console.error("");
+        console.error(formatExplainBlock(
+            result.diagnostics.context,
+            result.diagnostics.selected,
+            result.diagnostics.candidates?.length ? result.diagnostics.candidates.length - 1 : 0
+        ));
+    }
 }
 
 function printLintResult(result: LintMessageCommandResult, output: OutputFormat): void {
@@ -256,6 +283,7 @@ async function runGenerateCommand(): Promise<number> {
         .option("--no-verify", "Pass --no-verify to git commit", false)
         .option("--ci", "Non-interactive mode for CI usage", false)
         .option("--allow-invalid", "Allow commit even if validation fails", false)
+        .option("--explain", "Show why the message was selected", false)
         .option("--timeout-ms <n>", `Ollama request timeout in milliseconds (${MIN_TIMEOUT_MS}-${MAX_TIMEOUT_MS})`)
         .option("--retries <n>", `Retry count for transient Ollama failures (${MIN_RETRIES}-${MAX_RETRIES})`)
         .option("--output <format>", "Output format (text|json)", "text")
