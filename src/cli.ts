@@ -2,19 +2,17 @@
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { runDoctor } from "./doctor.js";
-import { formatExplainBlock } from "./explain-output.js";
 import { ExitCode } from "./exit-codes.js";
 import { getMessageSubject } from "./finalize.js";
 import {
     formatHookError,
-    formatHookInstallMessage,
-    formatHookUninstallMessage,
     installHooks,
     runCommitMsgHook,
     runPrepareCommitMsgHook,
     uninstallHooks
 } from "./hooks.js";
 import { lintMessageFile, type LintMessageCommandResult } from "./lint-message.js";
+import { createTerminalUi, renderActionSummary, renderDoctorReport, renderErrorBlock, renderReviewScreen } from "./ui.js";
 import { buildDefaultWorkflowOptions } from "./workflow-options.js";
 import { parseBoundedInteger } from "./util.js";
 import { isAllowedType, type AllowedType } from "./validation.js";
@@ -136,7 +134,7 @@ function buildDoctorOptions(raw: RawDoctorOptions): WorkflowOptions {
     };
 }
 
-function printJson(result: WorkflowResult): void {
+function printJson(result: WorkflowResult, options: WorkflowOptions): void {
     if (result.ok) {
         const payload: Record<string, unknown> = {
             status: "ok",
@@ -150,7 +148,7 @@ function printJson(result: WorkflowResult): void {
         if (result.alternatives && result.alternatives.length > 0) {
             payload.alternatives = result.alternatives;
         }
-        if (result.diagnostics) payload.diagnostics = result.diagnostics;
+        if (options.explain && result.diagnostics) payload.diagnostics = result.diagnostics;
 
         console.log(JSON.stringify(payload));
         return;
@@ -161,39 +159,133 @@ function printJson(result: WorkflowResult): void {
         code: result.code,
         hint: result.hint ?? result.message
     };
-    if (result.diagnostics) payload.diagnostics = result.diagnostics;
+    if (options.explain && result.diagnostics) payload.diagnostics = result.diagnostics;
     console.log(JSON.stringify(payload));
 }
 
-function printExplain(result: Extract<WorkflowResult, { ok: true }>): void {
-    if (!result.diagnostics?.selected) return;
-
-    console.log("");
-    console.log(formatExplainBlock(
-        result.diagnostics.context,
-        result.diagnostics.selected,
-        result.alternatives?.length ?? 0
-    ));
+function buildWorkflowErrorDisplay(result: Extract<WorkflowResult, { ok: false }>): {
+    problem: string;
+    why: string;
+    nextStep?: string;
+} {
+    switch (result.code) {
+        case "GIT_CONTEXT_ERROR":
+            if (result.message === "Not a git repository.") {
+                return {
+                    problem: "Git repository not found",
+                    why: "The command was run outside a git repository.",
+                    nextStep: "Run the command inside a git repository or initialize one with `git init`."
+                };
+            }
+            if (result.message.startsWith("No staged changes.")) {
+                return {
+                    problem: "No staged changes",
+                    why: "commitgen-cc only generates messages from staged files.",
+                    nextStep: "Stage files with `git add <files>` and rerun `commitgen-cc`."
+                };
+            }
+            return {
+                problem: "Git context error",
+                why: result.message,
+                nextStep: result.hint ?? "Fix the git repository state and retry."
+            };
+        case "OLLAMA_ERROR":
+            return {
+                problem: "Ollama is unavailable",
+                why: result.message,
+                nextStep: result.hint ?? "Start Ollama with `ollama serve`, confirm the configured host/model, then rerun `commitgen-cc doctor`."
+            };
+        case "INVALID_AI_OUTPUT":
+            return {
+                problem: "Generated message failed validation",
+                why: result.message.replace(/^AI output failed validation:\s*/, ""),
+                nextStep: result.hint ?? "Revise, edit, regenerate, or rerun with `--allow-invalid` if you want to override."
+            };
+        case "GIT_COMMIT_ERROR":
+            return {
+                problem: "git commit failed",
+                why: result.message,
+                nextStep: result.hint ?? "Resolve repository or hook errors, then retry."
+            };
+        case "USAGE_ERROR":
+            return {
+                problem: "Configuration or usage error",
+                why: result.message,
+                nextStep: result.hint ?? "Review the command arguments or config file and retry."
+            };
+        default:
+            return {
+                problem: "Unexpected internal error",
+                why: result.message,
+                nextStep: result.hint ?? "Rerun with `commitgen-cc doctor` and review the current repo/config state."
+            };
+    }
 }
 
 function printText(result: WorkflowResult, options: WorkflowOptions): void {
+    const stdoutUi = createTerminalUi(process.stdout);
+    const stderrUi = createTerminalUi(process.stderr);
+
     if (result.ok) {
         if (result.cancelled) {
+            if (stdoutUi.richLayout && !options.ci) {
+                console.log(renderActionSummary(stdoutUi, "Cancelled", ["No commit was created."]));
+                return;
+            }
             console.log("Cancelled.");
             return;
         }
 
         if (!result.committed) {
-            console.log(result.message);
-            if (options.explain) printExplain(result);
+            if (result.diagnostics?.selected) {
+                console.log(renderReviewScreen(
+                    stdoutUi,
+                    result.diagnostics.context,
+                    result.diagnostics.selected,
+                    {
+                        explain: options.explain,
+                        alternativesCount: result.alternatives?.length ?? 0
+                    }
+                ));
+            } else {
+                console.log(result.message);
+            }
             return;
         }
 
         if (options.ci) {
             console.log(result.message);
-            if (options.explain) printExplain(result);
         } else {
+            if (stdoutUi.richLayout) {
+                console.log(renderActionSummary(stdoutUi, "Commit created", [
+                    `Subject: ${getMessageSubject(result.message)}`,
+                    `Scope: ${result.scope ?? "none"}`,
+                    `Ticket: ${result.ticket ?? "none"}`
+                ]));
+                return;
+            }
             console.log(`Committed: ${getMessageSubject(result.message)}`);
+        }
+        return;
+    }
+
+    if (stderrUi.richLayout) {
+        const display = buildWorkflowErrorDisplay(result);
+        console.error(renderErrorBlock(stderrUi, display.problem, display.why, display.nextStep));
+        if (result.diagnostics?.selected) {
+            console.error("");
+            console.error(renderReviewScreen(
+                createTerminalUi(process.stderr, { forceRichLayout: true }),
+                result.diagnostics.context,
+                result.diagnostics.selected,
+                {
+                    explain: options.explain,
+                    alternativesCount: result.diagnostics.candidates?.length
+                        ? result.diagnostics.candidates.length - 1
+                        : 0,
+                    validationNextStep: display.nextStep
+                }
+            ));
         }
         return;
     }
@@ -202,10 +294,17 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
     if (result.hint) console.error(result.hint);
     if (options.explain && result.diagnostics?.selected) {
         console.error("");
-        console.error(formatExplainBlock(
+        console.error(renderReviewScreen(
+            createTerminalUi(process.stderr),
             result.diagnostics.context,
             result.diagnostics.selected,
-            result.diagnostics.candidates?.length ? result.diagnostics.candidates.length - 1 : 0
+            {
+                explain: true,
+                alternativesCount: result.diagnostics.candidates?.length
+                    ? result.diagnostics.candidates.length - 1
+                    : 0,
+                validationNextStep: result.hint ?? undefined
+            }
         ));
     }
 }
@@ -246,10 +345,10 @@ function printLintResult(result: LintMessageCommandResult, output: OutputFormat)
 }
 
 function printDoctorResult(result: Awaited<ReturnType<typeof runDoctor>>): void {
-    for (const check of result.checks) {
-        const label = check.ok ? "OK" : "FAIL";
-        console.log(`[${label}] ${check.name}: ${check.detail}`);
-    }
+    console.log(renderDoctorReport(
+        createTerminalUi(process.stdout, { forceRichLayout: true }),
+        result
+    ));
 }
 
 function getCommandErrorExitCode(error: unknown, fallback: number): number {
@@ -301,7 +400,7 @@ async function runGenerateCommand(): Promise<number> {
 
     const result = await runWorkflow(options);
     if (options.output === "json") {
-        printJson(result);
+        printJson(result, options);
     } else {
         printText(result, options);
     }
@@ -325,11 +424,19 @@ async function runInstallHookCommand(): Promise<number> {
             process.execPath,
             options.config?.trim() ? options.config.trim() : null
         );
-        console.log(formatHookInstallMessage(installed));
+        console.log(renderActionSummary(
+            createTerminalUi(process.stdout, { forceRichLayout: true }),
+            "Hooks installed",
+            installed.length > 0 ? installed : ["No hooks were installed."]
+        ));
         return ExitCode.Success;
     } catch (error: unknown) {
-        console.error(formatHookError(error));
-        if (error instanceof WorkflowError && error.hint) console.error(error.hint);
+        console.error(renderErrorBlock(
+            createTerminalUi(process.stderr, { forceRichLayout: true }),
+            "Hook install failed",
+            formatHookError(error),
+            error instanceof WorkflowError ? (error.hint ?? "Resolve the existing hook/config conflict and retry.") : undefined
+        ));
         return getCommandErrorExitCode(error, ExitCode.UsageError);
     }
 }
@@ -343,10 +450,19 @@ async function runUninstallHookCommand(): Promise<number> {
 
     try {
         const removed = await uninstallHooks();
-        console.log(formatHookUninstallMessage(removed));
+        console.log(renderActionSummary(
+            createTerminalUi(process.stdout, { forceRichLayout: true }),
+            "Hooks removed",
+            removed.length > 0 ? removed : ["No managed hooks were removed."]
+        ));
         return ExitCode.Success;
     } catch (error: unknown) {
-        console.error(formatHookError(error));
+        console.error(renderErrorBlock(
+            createTerminalUi(process.stderr, { forceRichLayout: true }),
+            "Hook uninstall failed",
+            formatHookError(error),
+            "Verify the repository and rerun `commitgen-cc uninstall-hook`."
+        ));
         return getCommandErrorExitCode(error, ExitCode.UsageError);
     }
 }
