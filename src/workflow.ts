@@ -201,7 +201,7 @@ async function runNonInteractive(
         throw new WorkflowError(ExitCode.InternalError, "Failed to generate a commit message.");
     }
 
-    const diagnostics = options.explain
+    const diagnostics = options.explain || options.output === "text"
         ? buildWorkflowDiagnostics(context, options, selected, candidates)
         : undefined;
     const alternatives = getAlternatives(candidates);
