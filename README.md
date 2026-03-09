@@ -6,63 +6,29 @@ It can also run in dry-run mode, emit JSON for CI, remember recent accepted comm
 
 ## Quick Start
 
-You need:
+Requirements:
 
 - [Node.js](https://nodejs.org/) `v20+`
 - `git`
-- [Ollama](https://ollama.com/) installed locally
+- [Ollama](https://ollama.com/) running locally
 
-Minimum successful setup:
-
-```bash
-# 1. Start Ollama if it is not already running
-ollama serve
-
-# 2. Pull the default model once
-ollama pull gpt-oss:120b-cloud
-
-# 3. Install commitgen-cc
-npm install -g commitgen-cc
-
-# 4. Stage your changes inside a git repo
-git add .
-
-# 5. Generate a commit message
-commitgen-cc
-```
-
-If anything fails, start with:
-
-```bash
-commitgen-cc doctor
-```
-
-## Ollama Setup
-
-`commitgen-cc` is local-first. It does not call a hosted OpenAI-style API. It expects an Ollama server running on your machine.
-
-Defaults:
+Default runtime:
 
 - Host: `http://localhost:11434`
 - Model: `gpt-oss:120b-cloud`
 
-Common Ollama commands:
+Install and run:
 
 ```bash
-# Start the local Ollama server
 ollama serve
-
-# Pull the default model used by commitgen-cc
 ollama pull gpt-oss:120b-cloud
+npm install -g commitgen-cc
+
+git add .
+commitgen-cc
 ```
 
-When to override the defaults:
-
-- Use `--host` or `GIT_AI_HOST` if Ollama is running on a different address.
-- Use `--model` or `GIT_AI_MODEL` if you want a different local model.
-- Use `--timeout-ms` if your local model is slow.
-
-First troubleshooting command:
+If Ollama runs somewhere else, use `--host` or `GIT_AI_HOST`. If you want a different model, use `--model` or `GIT_AI_MODEL`. If anything fails, start with:
 
 ```bash
 commitgen-cc doctor
@@ -70,9 +36,7 @@ commitgen-cc doctor
 
 `doctor` checks Node, git context, config loading, Ollama reachability, and whether the configured model exists locally.
 
-## Install and Run
-
-### Recommended install
+## Install
 
 For daily use:
 
@@ -80,9 +44,7 @@ For daily use:
 npm install -g commitgen-cc
 ```
 
-### One-off usage
-
-For a quick one-time run:
+For a one-off run:
 
 ```bash
 npx commitgen-cc
@@ -90,21 +52,7 @@ npx commitgen-cc
 
 `npx commitgen-cc` is fine for one-off usage. For persistent workflows such as git hooks, use a regular install so the executable path stays stable.
 
-### Optional alias
-
-If you want a shorter command, add an alias to your shell config:
-
-```bash
-alias aic="commitgen-cc"
-```
-
-Then reload your shell and run:
-
-```bash
-aic
-```
-
-### Main command options
+## Main Command Options
 
 These are the primary options for `commitgen-cc` itself:
 
@@ -129,7 +77,7 @@ These are the primary options for `commitgen-cc` itself:
 
 ## Common Usage Examples
 
-### Normal interactive use
+Default interactive flow:
 
 ```bash
 git add .
@@ -138,27 +86,25 @@ commitgen-cc
 
 By default, interactive mode generates one best message and lets you accept it, ask for a change, edit it, regenerate it, dry-run it, or cancel.
 
-### Print the message without committing
+Print the message without committing:
 
 ```bash
 commitgen-cc --dry-run
 ```
 
-### Generate machine-readable output for CI or scripts
+Generate machine-readable output:
 
 ```bash
 commitgen-cc --ci --dry-run --output json
 ```
 
-### Ask for multiple candidates
-
-This is advanced/optional. The default interactive flow uses one best message.
+Ask for multiple ranked candidates:
 
 ```bash
 commitgen-cc --candidates 3
 ```
 
-### Force type, scope, or ticket
+Force a type, scope, or ticket:
 
 ```bash
 commitgen-cc --type fix --scope cli --ticket ABC-123
@@ -243,7 +189,7 @@ Example with team policy:
 }
 ```
 
-## Team Workflow
+## Hooks and CI
 
 `commitgen-cc` can install repo-local hooks into `.git/hooks`.
 
@@ -286,15 +232,7 @@ commitgen-cc lint-message --file .git/COMMIT_EDITMSG
 commitgen-cc lint-message --file .git/COMMIT_EDITMSG --output json
 ```
 
-## CI Usage
-
-### Generate JSON output
-
-```bash
-commitgen-cc --ci --dry-run --output json
-```
-
-With multiple ranked alternatives:
+For CI or scripts, generate machine-readable output:
 
 ```bash
 commitgen-cc --ci --dry-run --output json --candidates 3
@@ -324,7 +262,10 @@ Example:
 
 ## Maintainer Release Notes
 
-This repo uses a tag-based release workflow in `.github/workflows/release.yml`.
+This repo has two GitHub Actions workflows:
+
+- `.github/workflows/ci.yml` runs `npm run check` on every push to `main`
+- `.github/workflows/release.yml` runs only for pushed tags matching `v*`
 
 Release flow:
 
@@ -336,9 +277,10 @@ git push origin main --follow-tags
 That:
 
 - creates a tag such as `v3.1.4`
-- pushes the tag
-- runs the release workflow
-- runs checks before publishing
+- pushes `main`, which triggers CI
+- pushes the matching tag, which triggers the release workflow
+- verifies the tagged commit is already contained in `main`
+- runs checks again before publishing
 - publishes to npm if that version is not already published
 - creates or updates the GitHub Release for that tag
 
