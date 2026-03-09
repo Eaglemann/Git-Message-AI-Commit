@@ -1,20 +1,32 @@
 import prompts from "prompts";
 import { buildCandidateDiagnostics, buildContextDiagnostics } from "./diagnostics.js";
-import { formatExplainBlock, formatMessageCard } from "./explain-output.js";
 import { ExitCode } from "./exit-codes.js";
 import { getAlternatives, buildSuccessResult, commitMessage, maybeRecordHistory } from "./finalize.js";
 import { lintCommitMessage } from "./policy.js";
 import { type RankedCandidate } from "./ranking.js";
+import { createTerminalUi, renderReviewScreen } from "./ui.js";
 import { normalizeMessage, type ValidationResult } from "./validation.js";
 import { WorkflowError } from "./workflow-errors.js";
 import { generateCandidates, reviseCandidate } from "./candidates.js";
 import type { RepoContext, ResolvedWorkflowOptions, SuccessResult } from "./workflow.js";
 
-function toCandidateChoice(candidate: RankedCandidate, index: number): { title: string; value: string; description?: string } {
-    const [subject, ...bodyLines] = candidate.message.split("\n");
+const INTERACTIVE_UI = createTerminalUi(process.stdout, { forceRichLayout: true });
+const INVALID_NEXT_STEP = "Choose Ask for a revision, Edit manually, Generate another, or Cancel.";
+
+function toCandidateChoice(
+    candidate: RankedCandidate,
+    index: number,
+    context: RepoContext,
+    options: ResolvedWorkflowOptions
+): { title: string; value: string; description?: string } {
+    const diagnostics = buildCandidateDiagnostics(candidate, context, options);
+    const [, ...bodyLines] = candidate.message.split("\n");
     const details = [
-        candidate.validation.ok ? "valid" : `invalid: ${candidate.validation.reason}`,
-        candidate.source === "repaired" ? "repaired" : null,
+        candidate.validation.ok ? "valid" : "invalid",
+        candidate.source === "repaired" ? "repaired" : "model",
+        `rank:${diagnostics.ranking.total}`,
+        diagnostics.final.scope.value ? `scope:${diagnostics.final.scope.value}` : null,
+        diagnostics.final.ticket.value ? `ticket:${diagnostics.final.ticket.value}` : null,
         bodyLines.find((line) => line.trim().length > 0)
             ? `body: ${bodyLines.find((line) => line.trim().length > 0)}`
             : null
@@ -23,19 +35,23 @@ function toCandidateChoice(candidate: RankedCandidate, index: number): { title: 
         .join(" | ");
 
     return {
-        title: `${index + 1}. ${subject}`,
+        title: `${index + 1}. ${diagnostics.subject}`,
         value: `candidate:${index}`,
         description: details || undefined
     };
 }
 
-async function chooseCandidate(candidates: RankedCandidate[]): Promise<RankedCandidate | "regen" | "cancel"> {
+async function chooseCandidate(
+    candidates: RankedCandidate[],
+    context: RepoContext,
+    options: ResolvedWorkflowOptions
+): Promise<RankedCandidate | "regen" | "cancel"> {
     const response = await prompts({
         type: "select",
         name: "selection",
-        message: "Select a candidate",
+        message: "Choose a candidate to review",
         choices: [
-            ...candidates.map(toCandidateChoice),
+            ...candidates.map((candidate, index) => toCandidateChoice(candidate, index, context, options)),
             { title: "Regenerate all", value: "regen" },
             { title: "Cancel", value: "cancel" }
         ],
@@ -54,7 +70,7 @@ async function chooseCandidateAction(): Promise<"accept" | "edit" | "dry" | "bac
     const response = await prompts({
         type: "select",
         name: "action",
-        message: "What next?",
+        message: "Choose an action",
         choices: [
             { title: "Commit selected message", value: "accept" },
             { title: "Edit selected message", value: "edit" },
@@ -73,7 +89,7 @@ async function chooseSingleMessageAction(): Promise<"accept" | "revise" | "edit"
     const response = await prompts({
         type: "select",
         name: "action",
-        message: "What next?",
+        message: "Choose an action",
         choices: [
             { title: "Commit this message", value: "accept" },
             { title: "Ask for a revision", value: "revise" },
@@ -107,24 +123,17 @@ function printSelectedCandidate(
     alternativesCount = 0
 ): void {
     const diagnostics = buildCandidateDiagnostics(candidate, context, options);
-
     console.log("");
-    console.log(formatMessageCard(diagnostics));
-
-    if (!candidate.validation.ok && !options.explain) {
-        console.log("");
-        console.log(`Validation: ${candidate.validation.reason}`);
-    }
-
-    if (options.explain) {
-        console.log("");
-        console.log(formatExplainBlock(
-            buildContextDiagnostics(context, options),
-            diagnostics,
-            alternativesCount
-        ));
-    }
-
+    console.log(renderReviewScreen(
+        INTERACTIVE_UI,
+        buildContextDiagnostics(context, options),
+        diagnostics,
+        {
+            explain: options.explain,
+            alternativesCount,
+            validationNextStep: candidate.validation.ok ? undefined : INVALID_NEXT_STEP
+        }
+    ));
     console.log("");
 }
 
@@ -208,7 +217,8 @@ async function handleFinalAction(
         console.error("Use Ask for change/Edit/Regenerate, or rerun with --allow-invalid to override.");
         finalCandidate = {
             ...finalCandidate,
-            validation
+            validation,
+            validationErrors: lintCommitMessage(finalCandidate.message, options.policy, options.ticketPattern).errors
         };
         return finalCandidate;
     }
@@ -294,7 +304,7 @@ async function runCandidateSelectionInteractive(
         }
 
         while (true) {
-            const selection = await chooseCandidate(candidates);
+            const selection = await chooseCandidate(candidates, context, options);
             if (selection === "cancel") {
                 return buildSuccessResult(
                     candidates[0].message,
