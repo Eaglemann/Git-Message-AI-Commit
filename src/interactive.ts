@@ -12,6 +12,7 @@ import type { RepoContext, ResolvedWorkflowOptions, SuccessResult } from "./work
 
 const INTERACTIVE_UI = createTerminalUi(process.stdout, { forceRichLayout: true });
 const INVALID_NEXT_STEP = "Choose Ask for a revision, Edit manually, Generate another, or Cancel.";
+const CHOICE_SEPARATOR = ` ${INTERACTIVE_UI.glyphs.separator} `;
 
 function toCandidateChoice(
     candidate: RankedCandidate,
@@ -24,15 +25,15 @@ function toCandidateChoice(
     const details = [
         candidate.validation.ok ? "valid" : "invalid",
         candidate.source === "repaired" ? "repaired" : "model",
-        `rank:${diagnostics.ranking.total}`,
-        diagnostics.final.scope.value ? `scope:${diagnostics.final.scope.value}` : null,
-        diagnostics.final.ticket.value ? `ticket:${diagnostics.final.ticket.value}` : null,
+        `score ${diagnostics.ranking.total}`,
+        diagnostics.final.scope.value ? `scope ${diagnostics.final.scope.value}` : null,
+        diagnostics.final.ticket.value ? `ticket ${diagnostics.final.ticket.value}` : null,
         bodyLines.find((line) => line.trim().length > 0)
             ? `body: ${bodyLines.find((line) => line.trim().length > 0)}`
             : null
     ]
         .filter((entry): entry is string => Boolean(entry))
-        .join(" | ");
+        .join(CHOICE_SEPARATOR);
 
     return {
         title: `${index + 1}. ${diagnostics.subject}`,

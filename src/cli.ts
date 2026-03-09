@@ -12,7 +12,15 @@ import {
     uninstallHooks
 } from "./hooks.js";
 import { lintMessageFile, type LintMessageCommandResult } from "./lint-message.js";
-import { createTerminalUi, renderActionSummary, renderDoctorReport, renderErrorBlock, renderReviewScreen } from "./ui.js";
+import {
+    createTerminalUi,
+    renderActionSummary,
+    renderDoctorReport,
+    renderErrorBlock,
+    renderReviewScreen,
+    renderStateCard,
+    renderValidationBlock
+} from "./ui.js";
 import { buildDefaultWorkflowOptions } from "./workflow-options.js";
 import { parseBoundedInteger } from "./util.js";
 import { isAllowedType, type AllowedType } from "./validation.js";
@@ -229,7 +237,11 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
     if (result.ok) {
         if (result.cancelled) {
             if (stdoutUi.richLayout && !options.ci) {
-                console.log(renderActionSummary(stdoutUi, "Cancelled", ["No commit was created."]));
+                console.log(renderStateCard(stdoutUi, {
+                    title: "Cancelled",
+                    headline: "No commit was created.",
+                    tone: "warning"
+                }));
                 return;
             }
             console.log("Cancelled.");
@@ -257,11 +269,15 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
             console.log(result.message);
         } else {
             if (stdoutUi.richLayout) {
-                console.log(renderActionSummary(stdoutUi, "Commit created", [
-                    `Subject: ${getMessageSubject(result.message)}`,
-                    `Scope: ${result.scope ?? "none"}`,
-                    `Ticket: ${result.ticket ?? "none"}`
-                ]));
+                console.log(renderStateCard(stdoutUi, {
+                    title: "Commit created",
+                    headline: getMessageSubject(result.message),
+                    meta: [
+                        `scope ${result.scope ?? "none"}`,
+                        `ticket ${result.ticket ?? "none"}`
+                    ],
+                    tone: "success"
+                }));
                 return;
             }
             console.log(`Committed: ${getMessageSubject(result.message)}`);
@@ -271,11 +287,12 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
 
     if (stderrUi.richLayout) {
         const display = buildWorkflowErrorDisplay(result);
-        console.error(renderErrorBlock(stderrUi, display.problem, display.why, display.nextStep));
-        if (result.diagnostics?.selected) {
-            console.error("");
+        if (result.code === "INVALID_AI_OUTPUT" && result.diagnostics?.selected) {
             console.error(renderReviewScreen(
-                createTerminalUi(process.stderr, { forceRichLayout: true }),
+                createTerminalUi(process.stderr, {
+                    forceRichLayout: true,
+                    forceUnicode: stderrUi.unicode
+                }),
                 result.diagnostics.context,
                 result.diagnostics.selected,
                 {
@@ -283,7 +300,30 @@ function printText(result: WorkflowResult, options: WorkflowOptions): void {
                     alternativesCount: result.diagnostics.candidates?.length
                         ? result.diagnostics.candidates.length - 1
                         : 0,
-                    validationNextStep: display.nextStep
+                    validationNextStep: display.nextStep,
+                    title: "Generated message rejected"
+                }
+            ));
+            return;
+        }
+
+        console.error(renderErrorBlock(stderrUi, display.problem, display.why, display.nextStep));
+        if (result.diagnostics?.selected && options.explain) {
+            console.error("");
+            console.error(renderReviewScreen(
+                createTerminalUi(process.stderr, {
+                    forceRichLayout: true,
+                    forceUnicode: stderrUi.unicode
+                }),
+                result.diagnostics.context,
+                result.diagnostics.selected,
+                {
+                    explain: true,
+                    alternativesCount: result.diagnostics.candidates?.length
+                        ? result.diagnostics.candidates.length - 1
+                        : 0,
+                    validationNextStep: display.nextStep,
+                    title: "Generated message"
                 }
             ));
         }
@@ -333,8 +373,31 @@ function printLintResult(result: LintMessageCommandResult, output: OutputFormat)
     }
 
     if (result.ok) {
+        const ui = createTerminalUi(process.stdout);
+        if (ui.richLayout) {
+            console.log(renderStateCard(ui, {
+                title: "Commit message valid",
+                headline: result.subject,
+                meta: [
+                    `type ${result.type ?? "none"}`,
+                    `scope ${result.scope ?? "none"}`,
+                    `ticket ${result.ticket ?? "none"}`
+                ],
+                tone: "success"
+            }));
+            return;
+        }
         console.log("Commit message is valid.");
         console.log(result.subject);
+        return;
+    }
+
+    const ui = createTerminalUi(process.stderr);
+    if (ui.richLayout) {
+        console.error(renderValidationBlock(ui, result.errors, {
+            title: "Commit message failed validation",
+            nextStep: "Edit the message file and rerun `commitgen-cc lint-message`."
+        }));
         return;
     }
 
@@ -345,10 +408,7 @@ function printLintResult(result: LintMessageCommandResult, output: OutputFormat)
 }
 
 function printDoctorResult(result: Awaited<ReturnType<typeof runDoctor>>): void {
-    console.log(renderDoctorReport(
-        createTerminalUi(process.stdout, { forceRichLayout: true }),
-        result
-    ));
+    console.log(renderDoctorReport(createTerminalUi(process.stdout), result));
 }
 
 function getCommandErrorExitCode(error: unknown, fallback: number): number {
@@ -425,14 +485,14 @@ async function runInstallHookCommand(): Promise<number> {
             options.config?.trim() ? options.config.trim() : null
         );
         console.log(renderActionSummary(
-            createTerminalUi(process.stdout, { forceRichLayout: true }),
+            createTerminalUi(process.stdout),
             "Hooks installed",
             installed.length > 0 ? installed : ["No hooks were installed."]
         ));
         return ExitCode.Success;
     } catch (error: unknown) {
         console.error(renderErrorBlock(
-            createTerminalUi(process.stderr, { forceRichLayout: true }),
+            createTerminalUi(process.stderr),
             "Hook install failed",
             formatHookError(error),
             error instanceof WorkflowError ? (error.hint ?? "Resolve the existing hook/config conflict and retry.") : undefined
@@ -451,14 +511,14 @@ async function runUninstallHookCommand(): Promise<number> {
     try {
         const removed = await uninstallHooks();
         console.log(renderActionSummary(
-            createTerminalUi(process.stdout, { forceRichLayout: true }),
+            createTerminalUi(process.stdout),
             "Hooks removed",
             removed.length > 0 ? removed : ["No managed hooks were removed."]
         ));
         return ExitCode.Success;
     } catch (error: unknown) {
         console.error(renderErrorBlock(
-            createTerminalUi(process.stderr, { forceRichLayout: true }),
+            createTerminalUi(process.stderr),
             "Hook uninstall failed",
             formatHookError(error),
             "Verify the repository and rerun `commitgen-cc uninstall-hook`."
