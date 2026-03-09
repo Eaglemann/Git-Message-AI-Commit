@@ -12,7 +12,7 @@ import {
 } from "./validation.js";
 import type { RepoContext, ResolvedWorkflowOptions } from "./workflow.js";
 
-type CandidateDraft = Omit<RankedCandidate, "score">;
+type CandidateDraft = Pick<RankedCandidate, "message" | "source" | "validation" | "validationErrors">;
 
 function normalizeFeedback(feedback: string): string {
     return feedback.trim().toLowerCase();
@@ -46,6 +46,7 @@ function toCandidateDraft(
     return {
         message,
         source: repaired.didRepair ? "repaired" : "model",
+        validationErrors: lintResult.errors,
         validation: lintResult.ok
             ? { ok: true }
             : { ok: false, reason: lintResult.errors[0] ?? "Invalid commit message" }
@@ -106,6 +107,7 @@ function toRevisedCandidateDraft(
     return {
         message,
         source: repaired.didRepair || message !== normalizeMessage(rawMessage) ? "repaired" : "model",
+        validationErrors: lintResult.errors,
         validation: lintResult.ok
             ? { ok: true }
             : { ok: false, reason: lintResult.errors[0] ?? "Invalid commit message" }
@@ -223,11 +225,11 @@ export async function reviseCandidate(
     );
     return {
         ...candidate,
-        score: rankCandidates([candidate], {
+        ...rankCandidates([candidate], {
             expectedType: context.expectedType,
             expectedScope: context.effectiveScope,
             ticket: context.ticket,
             subjectMaxLength: options.policy.subjectMaxLength
-        })[0]?.score ?? 0
+        })[0]
     };
 }
