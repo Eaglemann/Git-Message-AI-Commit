@@ -8,6 +8,7 @@ import {
     loadRepoConfig,
     type RepoConfig
 } from "./config.js";
+import { buildWorkflowDiagnostics, type WorkflowDiagnostics } from "./diagnostics.js";
 import { ExitCode, EXIT_CODE_LABEL } from "./exit-codes.js";
 import { getGitDir, getRepoRoot, hasStagedChanges, isGitRepo } from "./git.js";
 import { ensureLocalModel, OllamaError } from "./ollama.js";
@@ -40,6 +41,7 @@ export type WorkflowOptions = {
     noVerify: boolean;
     ci: boolean;
     allowInvalid: boolean;
+    explain: boolean;
     timeoutMs: number;
     retries: number;
     output: OutputFormat;
@@ -59,6 +61,7 @@ export type SuccessResult = {
     scope: string | null;
     ticket: string | null;
     alternatives?: string[];
+    diagnostics?: WorkflowDiagnostics;
 };
 
 export type ErrorResult = {
@@ -67,6 +70,7 @@ export type ErrorResult = {
     code: string;
     message: string;
     hint: string | null;
+    diagnostics?: WorkflowDiagnostics;
 };
 
 export type WorkflowResult = SuccessResult | ErrorResult;
@@ -81,6 +85,7 @@ export type ResolvedWorkflowOptions = {
     noVerify: boolean;
     ci: boolean;
     allowInvalid: boolean;
+    explain: boolean;
     timeoutMs: number;
     retries: number;
     output: OutputFormat;
@@ -137,6 +142,7 @@ export function resolveWorkflowOptions(
         noVerify: options.noVerify,
         ci: options.ci,
         allowInvalid: options.allowInvalid,
+        explain: options.explain,
         timeoutMs: options.timeoutMs,
         retries: options.retries,
         output: options.output,
@@ -188,15 +194,30 @@ function toErrorResult(error: unknown): ErrorResult {
 async function runNonInteractive(
     context: RepoContext,
     options: ResolvedWorkflowOptions
-): Promise<SuccessResult> {
+): Promise<WorkflowResult> {
     const candidates = await generateCandidates(context, options);
     const selected = candidates[0];
     if (!selected) {
         throw new WorkflowError(ExitCode.InternalError, "Failed to generate a commit message.");
     }
 
-    ensureValid(selected, options.allowInvalid);
+    const diagnostics = options.explain
+        ? buildWorkflowDiagnostics(context, options, selected, candidates)
+        : undefined;
     const alternatives = getAlternatives(candidates);
+
+    if (!selected.validation.ok && !options.allowInvalid) {
+        return {
+            ok: false,
+            exitCode: ExitCode.InvalidAiOutput,
+            code: EXIT_CODE_LABEL[ExitCode.InvalidAiOutput],
+            message: `AI output failed validation: ${selected.validation.reason}`,
+            hint: "Regenerate/edit the message or pass --allow-invalid to override.",
+            diagnostics
+        };
+    }
+
+    ensureValid(selected, options.allowInvalid);
 
     if (options.dryRun) {
         return buildSuccessResult(
@@ -206,7 +227,8 @@ async function runNonInteractive(
             false,
             context,
             options.ticketPattern,
-            alternatives
+            alternatives,
+            diagnostics
         );
     }
 
@@ -220,7 +242,8 @@ async function runNonInteractive(
         false,
         context,
         options.ticketPattern,
-        alternatives
+        alternatives,
+        diagnostics
     );
 }
 

@@ -23,6 +23,7 @@ export function buildDefaultWorkflowOptions(overrides: Partial<WorkflowOptions> 
         noVerify: false,
         ci: false,
         allowInvalid: false,
+        explain: false,
         timeoutMs: parseBoundedInteger(
             readEnv("GIT_AI_TIMEOUT_MS") ?? String(DEFAULT_TIMEOUT_MS),
             "--timeout-ms",
