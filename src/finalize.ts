@@ -5,6 +5,7 @@ import { extractTicketFromMessage } from "./policy.js";
 import { normalizeErrorMessage } from "./util.js";
 import { parseConventionalSubject } from "./validation.js";
 import { WorkflowError } from "./workflow-errors.js";
+import type { WorkflowDiagnostics } from "./diagnostics.js";
 import type { MessageSource, RepoContext, ResolvedWorkflowOptions, SuccessResult } from "./workflow.js";
 import type { RankedCandidate } from "./ranking.js";
 
@@ -24,7 +25,8 @@ export function buildSuccessResult(
     cancelled: boolean,
     context: RepoContext,
     ticketPattern: string,
-    alternatives: string[]
+    alternatives: string[],
+    diagnostics?: WorkflowDiagnostics
 ): SuccessResult {
     return {
         ok: true,
@@ -35,7 +37,8 @@ export function buildSuccessResult(
         cancelled,
         scope: getMessageScope(message),
         ticket: extractTicketFromMessage(message, ticketPattern),
-        alternatives: alternatives.length > 0 ? alternatives : undefined
+        alternatives: alternatives.length > 0 ? alternatives : undefined,
+        diagnostics
     };
 }
 
