@@ -377,7 +377,8 @@ describe("runWorkflow", () => {
             await runWorkflow(baseOptions({ ci: false }));
 
             const joined = logSpy.mock.calls.flat().join("\n");
-            expect(joined).toContain("Commit message");
+            expect(joined).toContain("== Review commit message ==");
+            expect(joined).toContain("== Commit preview ==");
             expect(joined).not.toContain("Suggested commit candidates");
         } finally {
             logSpy.mockRestore();
@@ -395,11 +396,34 @@ describe("runWorkflow", () => {
             }));
 
             const joined = logSpy.mock.calls.flat().join("\n");
-            expect(joined).toContain("Commit message");
-            expect(joined).toContain("status: valid | repaired | scope:src | ticket:ABC-123");
-            expect(joined).toContain("Why this message");
+            expect(joined).toContain("== Review commit message ==");
+            expect(joined).toContain("== Context ==");
+            expect(joined).toContain("== Why this message ==");
         } finally {
             logSpy.mockRestore();
+        }
+    });
+
+    it("shows validation issues and recovery guidance on the interactive review screen", async () => {
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            ollamaMock.ollamaChat.mockResolvedValue("{\"message\":\"invalid message\"}");
+            promptsMock
+                .mockResolvedValueOnce({ action: "accept" })
+                .mockResolvedValueOnce({ action: "cancel" });
+
+            await runWorkflow(baseOptions({ ci: false }));
+
+            const joinedLogs = logSpy.mock.calls.flat().join("\n");
+            const joinedErrors = errorSpy.mock.calls.flat().join("\n");
+            expect(joinedLogs).toContain("== Validation issues ==");
+            expect(joinedLogs).toContain("Not Conventional Commits format");
+            expect(joinedLogs).toContain("== Next step ==");
+            expect(joinedErrors).toContain("Cannot commit invalid message");
+        } finally {
+            logSpy.mockRestore();
+            errorSpy.mockRestore();
         }
     });
 

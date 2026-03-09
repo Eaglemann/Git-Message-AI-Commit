@@ -63,6 +63,7 @@ describe("runDoctor", () => {
         expect(result.ok).toBe(false);
         expect(result.exitCode).toBe(ExitCode.GitContextError);
         expect(result.checks.some((check) => check.name === "Git repository" && !check.ok)).toBe(true);
+        expect(result.checks.find((check) => check.name === "Git repository" && !check.ok)?.nextStep).toContain("git init");
     });
 
     it("fails when the repo config file is invalid", async () => {
@@ -75,6 +76,7 @@ describe("runDoctor", () => {
         expect(result.ok).toBe(false);
         expect(result.exitCode).toBe(ExitCode.UsageError);
         expect(result.checks.some((check) => check.name === "Repo config" && !check.ok)).toBe(true);
+        expect(result.checks.find((check) => check.name === "Repo config" && !check.ok)?.nextStep).toContain("Fix `.commitgen.json`");
     });
 
     it("fails when the configured model is unavailable", async () => {
@@ -85,5 +87,6 @@ describe("runDoctor", () => {
         expect(result.ok).toBe(false);
         expect(result.exitCode).toBe(ExitCode.OllamaError);
         expect(result.checks.some((check) => check.name === "Configured model" && !check.ok)).toBe(true);
+        expect(result.checks.find((check) => check.name === "Configured model" && !check.ok)?.nextStep).toContain("ollama pull");
     });
 });
