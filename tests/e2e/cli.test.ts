@@ -191,7 +191,7 @@ describe("cli e2e", () => {
         expect(payload.hint).toContain("Stage files first");
     });
 
-    it("prints doctor output in named sections", async () => {
+    it("prints doctor output in a compact plain-text checklist", async () => {
         const repoDir = await mkdtemp(join(tmpdir(), "git-ai-commit-e2e-"));
         await initRepo(repoDir);
         const bootstrapPath = await writeMockFetch(repoDir);
@@ -209,14 +209,15 @@ describe("cli e2e", () => {
         });
 
         expect(exitCode).toBe(0);
-        expect(stdout).toContain("== Doctor ==");
-        expect(stdout).toContain("== Environment ==");
-        expect(stdout).toContain("== Repository ==");
-        expect(stdout).toContain("== Ollama ==");
-        expect(stdout).toContain("All checks passed.");
+        expect(stdout).toContain("Doctor");
+        expect(stdout).toContain("All checks passed");
+        expect(stdout).toContain("environment ready | repository ready | ollama ready");
+        expect(stdout).toContain("Environment:");
+        expect(stdout).toContain("Repository:");
+        expect(stdout).toContain("Ollama:");
     });
 
-    it("prints explain output in single-candidate dry-run text mode", async () => {
+    it("prints explain output in single-candidate dry-run text mode without extra sections", async () => {
         const repoDir = await mkdtemp(join(tmpdir(), "git-ai-commit-e2e-"));
         await initRepo(repoDir);
         await writeFile(join(repoDir, "README.md"), "# Demo\n");
@@ -242,9 +243,10 @@ describe("cli e2e", () => {
 
         expect(exitCode).toBe(0);
         expect(stdout).toContain("docs: update readme");
-        expect(stdout).toContain("== Why this message ==");
-        expect(stdout).toContain("Selected ticket : ABC-123 (branch inference)");
-        expect(stdout).toContain("Ranking");
+        expect(stdout).toContain("Refs ABC-123");
+        expect(stdout).toContain("why: valid | type-match | ticket-footer | subject-fit");
+        expect(stdout).toContain("score: 1110100");
+        expect(stdout).toContain("from: type diff | ticket branch");
     });
 
     it("prints explain output with alternatives in multi-candidate dry-run text mode", async () => {
@@ -274,8 +276,9 @@ describe("cli e2e", () => {
         });
 
         expect(exitCode).toBe(0);
-        expect(stdout).toContain("== Why this message ==");
-        expect(stdout).toContain("Alternatives    : 1");
+        expect(stdout).toContain("why: valid | type-match | ticket-footer | subject-fit");
+        expect(stdout).toContain("score: 1110100");
+        expect(stdout).toContain("alternatives: 1");
     });
 
     it("shows full validation errors in explain mode when generation is invalid", async () => {
@@ -312,16 +315,17 @@ describe("cli e2e", () => {
         expect(result.exitCode).toBe(4);
         expect(result.stderr).toContain("AI output failed validation: Not Conventional Commits format");
         expect(result.stderr).toContain("Not Conventional Commits format");
-        expect(result.stderr).toContain("== Why this message ==");
+        expect(result.stderr).toContain("errors:");
         expect(result.stderr).toContain("Scope is required and must be one of: cli.");
         expect(result.stderr).toContain("Message must reference a ticket.");
+        expect(result.stderr).toContain("next: Regenerate/edit the message or pass --allow-invalid to override.");
     });
 
-    it("installs and uninstalls managed hooks", async () => {
+    it("installs and uninstalls managed hooks with compact text summaries", async () => {
         const repoDir = await mkdtemp(join(tmpdir(), "git-ai-commit-hooks-"));
         await initRepo(repoDir);
 
-        await execa(getNodeBin(), [getCliPath(), "install-hook"], { cwd: repoDir });
+        const installResult = await execa(getNodeBin(), [getCliPath(), "install-hook"], { cwd: repoDir });
 
         const prepareHookPath = join(repoDir, ".git", "hooks", "prepare-commit-msg");
         const commitHookPath = join(repoDir, ".git", "hooks", "commit-msg");
@@ -329,11 +333,17 @@ describe("cli e2e", () => {
         const commitHook = await readFile(commitHookPath, "utf8");
         const prepareStats = await stat(prepareHookPath);
 
+        expect(installResult.stdout).toContain("Hooks installed:");
+        expect(installResult.stdout).toMatch(/- .+\.git\/hooks\/prepare-commit-msg/);
+        expect(installResult.stdout).toMatch(/- .+\.git\/hooks\/commit-msg/);
         expect(prepareHook).toContain("commitgen-cc managed hook");
         expect(commitHook).toContain("commitgen-cc managed hook");
         expect(prepareStats.mode & 0o111).not.toBe(0);
 
-        await execa(getNodeBin(), [getCliPath(), "uninstall-hook"], { cwd: repoDir });
+        const uninstallResult = await execa(getNodeBin(), [getCliPath(), "uninstall-hook"], { cwd: repoDir });
+        expect(uninstallResult.stdout).toContain("Hooks removed:");
+        expect(uninstallResult.stdout).toMatch(/- .+\.git\/hooks\/prepare-commit-msg/);
+        expect(uninstallResult.stdout).toMatch(/- .+\.git\/hooks\/commit-msg/);
         await expect(stat(prepareHookPath)).rejects.toThrow();
         await expect(stat(commitHookPath)).rejects.toThrow();
     });
@@ -406,7 +416,7 @@ describe("cli e2e", () => {
         await expect(readFile(messageFile, "utf8")).resolves.toContain("docs: update readme");
     });
 
-    it("blocks invalid commit messages through the commit-msg hook and validates files via lint-message", async () => {
+    it("renders compact text output for lint-message and blocks invalid commit messages through the hook", async () => {
         const repoDir = await mkdtemp(join(tmpdir(), "git-ai-commit-hooks-"));
         await initRepo(repoDir);
         await writeFile(join(repoDir, ".commitgen.json"), JSON.stringify({
@@ -426,7 +436,29 @@ describe("cli e2e", () => {
         expect(hookResult.exitCode).toBe(4);
         expect(hookResult.stderr).toContain("Commit message failed validation.");
 
+        const lintFailure = await execa(getNodeBin(), [
+            getCliPath(),
+            "lint-message",
+            "--file",
+            messageFile
+        ], { cwd: repoDir, reject: false });
+
+        expect(lintFailure.exitCode).toBe(4);
+        expect(lintFailure.stderr).toContain("Commit message failed validation.");
+        expect(lintFailure.stderr).toContain("- Not Conventional Commits format");
+        expect(lintFailure.stderr).toContain("- Message must reference a ticket.");
+
         await writeFile(messageFile, "fix(cli): tighten hook flow\n\nRefs ABC-123\n");
+        const lintText = await execa(getNodeBin(), [
+            getCliPath(),
+            "lint-message",
+            "--file",
+            messageFile
+        ], { cwd: repoDir });
+
+        expect(lintText.stdout).toContain("Commit message is valid.");
+        expect(lintText.stdout).toContain("fix(cli): tighten hook flow");
+
         const lintResult = await execa(getNodeBin(), [
             getCliPath(),
             "lint-message",
