@@ -377,8 +377,8 @@ describe("runWorkflow", () => {
             await runWorkflow(baseOptions({ ci: false }));
 
             const joined = logSpy.mock.calls.flat().join("\n");
-            expect(joined).toContain("== Review commit message ==");
-            expect(joined).toContain("== Commit preview ==");
+            expect(joined).toContain("Review commit");
+            expect(joined).toContain("[VALID] [REPAIRED]");
             expect(joined).not.toContain("Suggested commit candidates");
         } finally {
             logSpy.mockRestore();
@@ -396,9 +396,9 @@ describe("runWorkflow", () => {
             }));
 
             const joined = logSpy.mock.calls.flat().join("\n");
-            expect(joined).toContain("== Review commit message ==");
-            expect(joined).toContain("== Context ==");
-            expect(joined).toContain("== Why this message ==");
+            expect(joined).toContain("Review commit");
+            expect(joined).toContain("Why it won");
+            expect(joined).toContain("signals");
         } finally {
             logSpy.mockRestore();
         }
@@ -417,9 +417,9 @@ describe("runWorkflow", () => {
 
             const joinedLogs = logSpy.mock.calls.flat().join("\n");
             const joinedErrors = errorSpy.mock.calls.flat().join("\n");
-            expect(joinedLogs).toContain("== Validation issues ==");
+            expect(joinedLogs).toContain("Needs attention");
             expect(joinedLogs).toContain("Not Conventional Commits format");
-            expect(joinedLogs).toContain("== Next step ==");
+            expect(joinedLogs).toContain("next Choose Ask for a revision");
             expect(joinedErrors).toContain("Cannot commit invalid message");
         } finally {
             logSpy.mockRestore();
