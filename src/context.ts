@@ -8,6 +8,7 @@ function findMappedScope(
 ): string | null {
     const normalizedFile = normalizePathPrefix(file);
     let bestMatch: string | null = null;
+    let bestMatchRaw: string | null = null;
 
     for (const rawPrefix of Object.keys(scopeMap)) {
         const prefix = normalizePathPrefix(rawPrefix);
@@ -15,10 +16,11 @@ function findMappedScope(
         if (normalizedFile !== prefix && !normalizedFile.startsWith(`${prefix}/`)) continue;
         if (!bestMatch || prefix.length > bestMatch.length) {
             bestMatch = prefix;
+            bestMatchRaw = rawPrefix;
         }
     }
 
-    return bestMatch ? scopeMap[bestMatch] ?? null : null;
+    return bestMatchRaw ? scopeMap[bestMatchRaw] ?? null : null;
 }
 
 export function inferScopeFromFiles(files: string[], scopeMap: Record<string, string> = {}): string | null {
