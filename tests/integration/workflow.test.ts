@@ -295,7 +295,7 @@ describe("runWorkflow", () => {
 
         expect(result.ok).toBe(true);
         if (result.ok) expect(result.ticket).toBe("XYZ-999");
-        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(src): tighten parser flow\n\nRefs XYZ-999", { noVerify: false });
+        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(a): tighten parser flow\n\nRefs XYZ-999", { noVerify: false });
     });
 
     it("returns and persists the actual final scope when an edited message omits scope", async () => {
@@ -439,7 +439,7 @@ describe("runWorkflow", () => {
         }));
 
         expect(result.ok).toBe(true);
-        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(src): tighten parser flow\n\nRefs ABC-123", { noVerify: false });
+        expect(gitMock.gitCommit).toHaveBeenCalledWith("fix(a): tighten parser flow\n\nRefs ABC-123", { noVerify: false });
     });
 
     it("includes inferred ticket and alternatives in dry-run results", async () => {
@@ -454,7 +454,7 @@ describe("runWorkflow", () => {
         expect(result.ok).toBe(true);
         if (result.ok) {
             expect(result.ticket).toBe("ABC-123");
-            expect(result.alternatives).toEqual(["feat(src): add ranking support\n\nRefs ABC-123"]);
+            expect(result.alternatives).toEqual(["feat(a): add ranking support\n\nRefs ABC-123"]);
         }
     });
 
@@ -469,8 +469,8 @@ describe("runWorkflow", () => {
         expect(result.ok).toBe(true);
         expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(1);
         if (result.ok) {
-            expect(result.message).toBe("feat(src): add baseline\n\nRefs ABC-123");
-            expect(result.alternatives).toEqual(["feat(src): add ranking support\n\nRefs ABC-123"]);
+            expect(result.message).toBe("feat(a): add baseline\n\nRefs ABC-123");
+            expect(result.alternatives).toEqual(["feat(a): add ranking support\n\nRefs ABC-123"]);
         }
     });
 
@@ -488,7 +488,7 @@ describe("runWorkflow", () => {
         expect(result.ok).toBe(true);
         expect(ollamaMock.ollamaChat).toHaveBeenCalledTimes(3);
         if (result.ok) {
-            expect(result.alternatives).toEqual(["feat(src): add ranking support\n\nRefs ABC-123"]);
+            expect(result.alternatives).toEqual(["feat(a): add ranking support\n\nRefs ABC-123"]);
         }
     });
 
